@@ -6,6 +6,10 @@ torch.set_printoptions(precision=4, linewidth=200, sci_mode=False)
 from environment import CitizenScienceEnv
 import logging
 from typing import List, Dict
+TIMESTAMP_INDEX = 6
+USER_INDEX = 3
+N_EVENTS_INDEX = 1
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--read_path', type=str, default='datasets/torch_ready_data_4/')
@@ -19,6 +23,7 @@ def parse_args():
 def create_user_trajectories(unique_users: torch.tensor, sequences: torch.tensor) -> Dict[int, torch.tensor]:
     """
     Returns a dictionary of user_id to their respective trajectories.
+    Sorts sequences by time of event.
         Example: {
             user_id: [
                 [[event_1, event_2]]   
@@ -28,18 +33,13 @@ def create_user_trajectories(unique_users: torch.tensor, sequences: torch.tensor
     
     trajectories = {}
     for user in unique_users:
-        trajectory = sequences[sequences[:, 3] == user]
-        trajectory = trajectory[trajectory[:, 1].sort()[1]]
-        trajectory[:, 1] = torch.arange(1, trajectory.shape[0] + 1)
+        trajectory = sequences[sequences[:, USER_INDEX] == user]
+        trajectory = trajectory[trajectory[:, N_EVENTS_INDEX].sort()[1]]
+        trajectory[:, N_EVENTS_INDEX] = torch.arange(1, trajectory.shape[0] + 1)
         trajectories[user.int().item()] = trajectory
     
     return trajectories, unique_users[0].int().item()
         
-        
-
-    
-    return trajectories, unique_users[0].int().item()
-
 def _extract_reward(comp_bin_dict):
     rewards = [
         comp_bin_dict[k]['n_events'] for k in comp_bin_dict
@@ -66,8 +66,6 @@ def main(args):
     unique_users =  torch.unique(dataset[:, 3].unique())
     user_trajectories, initial_user = create_user_trajectories(unique_users, dataset)
     initial_clickstream = user_trajectories[initial_user]
-    print(initial_clickstream[:, 1])
-    return
     logger.info(f'Number of user trajectories: {len(user_trajectories)}')
     
     citizen_science_env = CitizenScienceEnv(unique_users, user_trajectories, initial_user, n_sequences, n_features)

@@ -125,7 +125,6 @@ class CitizenScienceEnv(gym.Env):
     def _get_next_user(self):
         self.user_index += 1
         next_user = self.unique_users[self.user_index].int().item()
-        self.logger.info(f'Updating user index: {self.user_index}, user: {next_user}')
         return next_user
     
     def reset(self):

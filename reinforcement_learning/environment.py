@@ -83,6 +83,17 @@ class CitizenScienceEnv(gym.Env):
             self.comp_bin[self.user]['award_2_events'] = True
     
     def _calculate_next_state(self, historical_event):
+        """
+        Calculates the next state for the agent.
+        There are three cases:
+            1. The user has existing events in their session: return the next event.
+            2. The user has completed the total number of events and responds to incentive with probability > 0.5:
+                Calculate their probability of returning based on the gaussian proximity to the next incentive.
+                This is calculated by taking the log probability of the next event and adding a guassian noise.
+                Generate a new event based on the historical event and add it to the trajectory.
+            3: The user has completed the total number of events and does not respond to incentive with probability > 0.5:
+                Update the user and return the first event of the new user.
+        """
         next_index = self.comp_bin[self.user]['n_events']
         if next_index < self.trajectories[self.user].shape[0]:
             self.comp_bin[self.user]['n_events'] += 1

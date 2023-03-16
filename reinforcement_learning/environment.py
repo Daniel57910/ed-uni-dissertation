@@ -7,6 +7,7 @@ from npz_extractor import NPZExtractor
 import pdb
 USER_INDEX = 3
 N_EVENT_INDEX = 1
+import logging
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -19,6 +20,9 @@ def parse_args():
     return args
 
 class CitizenScienceEnv(gym.Env):
+    
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
     
     metadata = {'render.modes': ['human']}
     
@@ -64,19 +68,9 @@ class CitizenScienceEnv(gym.Env):
     
     def step(self, action):
        
-        print(f'Comp bin len: {len(self.comp_bin)}') 
         if len(self.comp_bin) == 58:
-            print(sorted(self.comp_bin.keys()))
-            print(sorted(self.unique_users))
             return True, None
 
-        if self.user not in self.comp_bin:
-            self._update_user()
-        
-        rewards = self.comp_bin[self.user]['n_events']
-        if rewards > 2:
-            self._update_user()
-        
         trajectories = self.trajectories[self.user]
         historical_event = trajectories[trajectories[:, N_EVENT_INDEX] == self.comp_bin[self.user]['n_events']]
         self._take_action(action)
@@ -92,23 +86,25 @@ class CitizenScienceEnv(gym.Env):
         next_index = self.comp_bin[self.user]['n_events']
         if next_index < self.trajectories[self.user].shape[0]:
             self.comp_bin[self.user]['n_events'] += 1
-            print(f'Calculating next state for user: {self.user} next index: {next_index}')
+            self.logger.debug(f'Calculating next state for user: {self.user} next index: {next_index}')
             return self.trajectories[self.user][next_index]
         else:
-            print(f'Self user: {self.user} next index: {next_index} not in range: {self.trajectories[self.user].shape[0]}')
+            self.logger.debug(f'Calculating next state for user: {self.user} next index: {next_index} not in range: {self.trajectories[self.user].shape[0]}')
             probability_return = torch.exp(self.dist.log_prob(torch.tensor(next_index))) + self._guassian_noise()
-            print(f'Probability of returning: {probability_return}')
+            self.logger.debug(f'Probability of returning: {probability_return}')
             if probability_return > 0.5:
                 next_state = historical_event + self._positive_gaussian_noise_vector(historical_event.shape[1])
                 self.comp_bin[self.user]['n_events'] += 1
                 next_state[:, N_EVENT_INDEX] = self.comp_bin[self.user]['n_events']
                 self.trajectories[self.user] = torch.cat((self.trajectories[self.user], next_state), dim=0)
+                n_events = self.trajectories[self.user][:, N_EVENT_INDEX]
+                self.logger.info(f'User: {self.user} has returned at step: {n_events}, from completing {self.comp_bin[self.user]["n_events"]} events')
                 return next_state
             else:
                 self._update_user()
                 current_trajcectory = self.trajectories[self.user]
                 current_step = self.comp_bin[self.user]['n_events']
-                print(f'Beginning new trajectory for user: {self.user} at step: {current_step}')
+                self.logger.info(f'Beggining new trajectory for user: {self.user} at step: {current_step}')
                 return current_trajcectory[current_trajcectory[:, N_EVENT_INDEX] == current_step]
 
     def _update_user(self):
@@ -129,20 +125,12 @@ class CitizenScienceEnv(gym.Env):
     def _get_next_user(self):
         self.user_index += 1
         next_user = self.unique_users[self.user_index].int().item()
-        print(f'Updating user index: {self.user_index}, user: {next_user}')
+        self.logger.info(f'Updating user index: {self.user_index}, user: {next_user}')
         return next_user
-
-
-        # tensor = self.citizen_science_dataset[self.current_step]
-        # user_id, total_events, features = self._extract_features(tensor)
-        # reward = self.current_step
-        
-        # return features, reward, done, {}
     
     def reset(self):
         self.current_step = 0
         return self._extract_features(self.citizen_science_dataset[self.current_step])
-
 
     def render(self, mode='human', close=False):
         print(f'Current Step: {self.current_step}')

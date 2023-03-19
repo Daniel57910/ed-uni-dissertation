@@ -81,6 +81,8 @@ class SessionCalculate:
    
     
     def write_inflections_parquet(self):
-        self.logger.info(f'Writing inflections to {self.write_path}.csv')
+        write_path = self.write_path + '.parquet.gzip'
+        self.logger.info(f'Writing inflections to {write_path}')
+        
         # write_path = self.write_path + '.parquet.gzip'
         self.df.to_csv(self.write_path + '.csv')

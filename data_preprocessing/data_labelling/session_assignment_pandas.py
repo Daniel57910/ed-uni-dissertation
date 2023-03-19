@@ -87,7 +87,7 @@ def get_columns():
   
 if __name__ == '__main__':
     args = parse_args()
-    if os.path.exists(args.write_path + '.csv'):
-        os.system(f'rm -r {args.write_path}')
+    if os.path.exists(args.write_path + '.parquet.gzip'):
+        os.system(f'rm -r {args.write_path} + ".parquet.gzip"')
     main(args)
     

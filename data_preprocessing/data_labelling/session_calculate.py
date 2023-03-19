@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import logging
 
-TEST_U_ID = 2373355
+TEST_U_ID = [2373355, 10, 4301]
 SAMPLE_COLS = [
     'user_id',
     'date_time',
@@ -27,10 +27,11 @@ def get_inflection_points_30(subset):
 import pdb
 class SessionCalculate:
     logger = logging.getLogger(__name__)
-    def __init__(self, df, write_path, use_gpu) -> None:
+    def __init__(self, df, write_path, use_gpu, test_env) -> None:
         self.df = df
         self.write_path = write_path
         self.use_gpu = use_gpu
+        self.test_env = test_env
     
     def calculate_inflections(self):
        
@@ -76,13 +77,26 @@ class SessionCalculate:
        
         self.logger.info('Applying inflection points to session 5') 
         self.df['session_5'] = self.df.apply(inner_inflection_5, axis=1)
-        
+       
         self.logger.info('Inflections calculated')
    
     
     def write_inflections_parquet(self):
-        write_path = self.write_path + '.parquet.gzip'
-        self.logger.info(f'Writing inflections to {write_path}')
+    
+        self.df = self.df.drop(columns=['index', 'level_0'])
+       
+        if not self.test_env:
+            self.df = self.df.drop(columns=['diff_minutes', 'row_count'])
         
+        if self.use_gpu:
+            import dask_cudf as ddf
+            self.logger.info('Bringing back to dask GPU for final calculations')
+            self.df = ddf.from_cudf(self.df, npartitions=30)
+        else:
+            import dask.dataframe as ddf
+            self.logger.info('Bringing back to dask CPU for final calculations')
+            self.df = ddf.from_pandas(self.df, npartitions=30)
+        
+        self.logger.info(f'Writing inflections to {self.write_path}')    
         # write_path = self.write_path + '.parquet.gzip'
-        self.df.to_csv(self.write_path + '.csv')
+        self.df.to_parquet(self.write_path)

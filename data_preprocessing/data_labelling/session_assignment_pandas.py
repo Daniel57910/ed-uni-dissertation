@@ -18,6 +18,7 @@ def parse_args():
     parser.add_argument('--write_path', type=str, default='datasets/frequency_encoded_2')
     parser.add_argument('--n_files', type=int, default=2)
     parser.add_argument('--use_gpu', type=bool, default=False)
+    parser.add_argument('--test_env', type=bool, default=True)
     args = parser.parse_args()
     return args
 
@@ -73,7 +74,7 @@ def main(args):
     df = dd.read_csv(files_to_read[:n_files], usecols=LOAD_COLUMNS).compute()
     df['date_time'] = pd.to_datetime(df['date_time'])
     df = df.sort_values(by=['date_time'])
-    session_calculator = SessionCalculate(df, args.write_path, args.use_gpu)
+    session_calculator = SessionCalculate(df, args.write_path, args.use_gpu, args.test_env)
     session_calculator.calculate_inflections()
     
     session_calculator.write_inflections_parquet()
@@ -87,7 +88,7 @@ def get_columns():
   
 if __name__ == '__main__':
     args = parse_args()
-    if os.path.exists(args.write_path + '.parquet.gzip'):
-        os.system(f'rm -r {args.write_path} + ".parquet.gzip"')
+    if os.path.exists(args.write_path):
+        os.system(f'rm -r {args.write_path}')
     main(args)
     

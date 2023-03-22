@@ -15,7 +15,7 @@ import pprint
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--read_path', type=str, default='datasets/encoded_time_data')
-    parser.add_argument('--write_path', type=str, default='datasets/frequency_encoded_2')
+    parser.add_argument('--write_path', type=str, default='datasets/labelled_session_count_data')
     parser.add_argument('--n_files', type=int, default=2)
     parser.add_argument('--use_gpu', type=bool, default=False)
     parser.add_argument('--test_env', type=bool, default=True)
@@ -78,12 +78,6 @@ def main(args):
     session_calculator.calculate_inflections()
     
     session_calculator.write_inflections_parquet()
-
-def get_columns():
-    with open('dissertation_project_code/data_preprocessing/data_labelling/columns', 'r') as f:
-        columns = f.read()
-        columns = columns.split(',')
-        print(*columns, sep='\n')
 
   
 if __name__ == '__main__':

@@ -24,7 +24,6 @@ def get_inflection_points_5(subset):
 def get_inflection_points_30(subset):
     return subset[subset['label_30'] == False].index.values
 
-import pdb
 class SessionCalculate:
     logger = logging.getLogger(__name__)
     def __init__(self, df, write_path, use_gpu, test_env) -> None:
@@ -35,11 +34,9 @@ class SessionCalculate:
     
     def calculate_inflections(self):
        
-        initial_df = self.df.copy() 
         self.logger.info('Calculating subsequent date time')
         self.df['next_date_time'] = self.df.groupby('user_id')['date_time'].shift(-1)
         self.df = self.df.drop_duplicates(subset=['user_id', 'date_time'], keep='last').reset_index()
-        print(self.df[self.df['user_id'] == 10])
         if self.use_gpu:
             self.logger.info('Bringing to CPU for second calculation')
             self.df = self.df.to_pandas()
@@ -66,18 +63,21 @@ class SessionCalculate:
         self.df['row_count'] = self.df.index.values
         self.logger.info(f'Sorted rows and applied row count on updated index')  
         self.logger.info('Calculating inflection points')
+        self.df['user_id'] = self.df['user_id'].astype('int32')
+       
+        inflections_5_merge = self.df[self.df['label_5'] == False]
+        inflections_30_merge = self.df[self.df['label_30'] == False]
         
-        inflections_5, inflections_30 = self.df.groupby('user_id').apply(get_inflection_points_5), self.df.groupby('user_id').apply(get_inflection_points_30)
-
-        inner_inflection_5, inner_inflection_30 = outer_apply_inflection_points(inflections_5), outer_apply_inflection_points(inflections_30)
-     
-     
-        self.logger.info('Applying inflection points to session 30')
-        self.df['session_30'] = self.df.apply(inner_inflection_30, axis=1)
-       
-        self.logger.info('Applying inflection points to session 5') 
-        self.df['session_5'] = self.df.apply(inner_inflection_5, axis=1)
-       
+        inflections_5_merge['session_5'] = inflections_5_merge.groupby('user_id').cumcount() + 1
+        inflections_30_merge['session_30'] = inflections_30_merge.groupby('user_id').cumcount() + 1
+        
+        inflections_5_merge = inflections_5_merge[['user_id', 'row_count', 'session_5']].sort_values(['row_count'])
+        inflections_30_merge = inflections_30_merge[['user_id', 'row_count', 'session_30']].sort_values(['row_count'])
+        
+    
+        self.df = pd.merge_asof(self.df, inflections_5_merge, on='row_count', by='user_id', direction='forward')
+        self.df = pd.merge_asof(self.df, inflections_30_merge, on='row_count', by='user_id', direction='forward')
+        
         self.logger.info('Inflections calculated')
    
     

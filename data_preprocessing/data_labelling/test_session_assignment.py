@@ -1,5 +1,5 @@
 import pandas as pd
-
+import dask.dataframe as dd
 pd.set_option('display.max_columns', None)
 pd.set_option('display.max_rows', None)
 pd.set_option('display.width', 400)
@@ -16,7 +16,7 @@ DEBUG_COLS = [
     
 def test_session_assignment():
 
-    df = pd.read_csv('datasets/frequency_encoded_2.csv')
+    df = dd.read_parquet('datasets/frequency_encoded_2').compute()
     df = df[DEBUG_COLS]
     df['date_time'] = pd.to_datetime(df['date_time'])
     df = df.sort_values(['date_time'])
@@ -28,7 +28,7 @@ def test_session_assignment():
     assert less_30.shape[0] == df[df['diff_minutes'] < 30].shape[0]
         
 def test_session_boundary():
-    calculated_df = pd.read_csv('datasets/frequency_encoded_2.csv')
+    calculated_df = dd.read_parquet('datasets/frequency_encoded_2').compute()
     calculated_df = calculated_df[DEBUG_COLS]
     calculated_df['date_time'] = pd.to_datetime(calculated_df['date_time'])
     calculated_df = calculated_df.sort_values(['date_time'])

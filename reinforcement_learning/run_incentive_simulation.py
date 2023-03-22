@@ -4,6 +4,7 @@ from npz_extractor import NPZExtractor
 import torch
 torch.set_printoptions(precision=4, linewidth=200, sci_mode=False)
 from environment import CitizenScienceEnv
+from distributions import DISTRIBUTIONS
 import logging
 from typing import List, Dict
 TIMESTAMP_INDEX = 6
@@ -16,6 +17,7 @@ def parse_args():
     parser.add_argument('--n_files', type=str, default='5')
     parser.add_argument('--n_sequences', type=int, default=10)
     parser.add_argument('--n_features', type=int, default=17)
+    parser.add_argument('--return_distribution', type=str, default='stack_overflow_v1')
     
     args = parser.parse_args()
     return args

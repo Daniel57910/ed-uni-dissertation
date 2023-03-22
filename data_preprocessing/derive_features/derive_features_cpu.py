@@ -8,6 +8,7 @@ from datetime import datetime
 import boto3
 import torch
 import tqdm
+from pprint import pformat
 
 if torch.cuda.is_available():
     import cupy as np
@@ -29,164 +30,20 @@ torch.set_printoptions(precision=4)
 np.set_printoptions(suppress=True)
 np.set_printoptions(precision=4)
 np.set_printoptions(linewidth=200)
+pd.set_option('display.max_columns', None)
+pd.set_option('display.max_rows', None)
+pd.set_option('display.width', 500)
+import logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 torch.set_printoptions(linewidth=400, precision=4, sci_mode=False)
 
-SCALED_COLS =[
-    'timestamp',
-    'time_diff_seconds',
-    '30_minute_session_count',
-    '5_minute_session_count',
-    'task_within_session_count',
-    'user_count',
-    'project_count',
-    'country_count',
-]
-
-GENERATED_COLS = [
-    'cum_events',
-    'cum_projects',
-    'cum_time',
-    'cum_time_within_session',
-    'av_time_across_clicks',
-    'av_time_across_clicks_session',
-    'rolling_average_tasks_within_session',
-    'rolling_av_time_within_session',
-    'rolling_time_between_sessions',
-]
-
-ENCODED_COLS = [
-    'user_id',
-    'project_id',
-    'country'
-]
-
-
-GROUPBY_COLS = ['user_id']
-
-TIMESTAMP_INDEX = 1
-
-INITIAL_LOAD_COLUMNS = ENCODED_COLS +  ['label', 'date_time'] +  [col for col in SCALED_COLS if 'timestamp' not in col and 'project_count' not in col]
-
-TIMESTAMP_INDEX = 1
-
-COUNTRY_ENCODING = {
-    'Finland': 1,
-    'United States': 2,
-    'China': 3,
-    'Singapore': 4,
-}
-
-PARTITION_LIST = [
-    {
-        'name': '125k',
-        'size': 125000,
-        'indexes': None
-    },
-    {
-        'name': '125m',
-        'size': 1250000,
-        'indexes': None
-    },
-    {
-        'name': '5m',
-        'size': 5000000,
-    },
-    {
-        'name': '10m',
-        'size': 10000000,
-    },
-    {
-        'name': '20m',
-        'size': 20000000,
-    },
-    {
-        'name': 'full',
-        'size': None,
-    }
-]
-
-class SessionizeData:
-    def __init__(self, df, max_sequence_index, write_path, partition_list=PARTITION_LIST, save_s3=True):
-        self.df = df
-        self.max_sequence_index = max_sequence_index + 1
-        self.min_sequence_index = self.max_sequence_index - 10
-        self.device = self._device()
-        self.sequences = numpy.arange(self.min_sequence_index, self.max_sequence_index).tolist()
-        self.seq_container = []
-        self.torch_sequences = None
-        self.output_path = write_path
-        self.partition_list = partition_list
-        self.save_s3 = save_s3
-
-    def _device(self):
-        return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-    def _sequence_lazy(self):
-         return next(self._lazy_load_shifted_index())
-
-    def _shifters(self):
-        for _ in range(self.min_sequence_index, self.max_sequence_index):
-            print(f'Loading sequence: {_} -> {self.max_sequence_index}')
-            self.seq_container.append(self._sequence_lazy())
-        if torch.cuda.is_available():
-            GPUtil.showUtilization()
-
-        sequences = torch.cat(self.seq_container, dim=1).half()
-        return sequences
-
-    def generate_sequence(self):
-
-        print(f'Generating shifted clickstreams from {self.min_sequence_index} -> {self.max_sequence_index}')
-        sequence = self._shifters()
-
-        print(f'Shifters shape: {sequence.shape}')
-
-        cols_required =  ['label', 'total_events'] + ENCODED_COLS + SCALED_COLS + GENERATED_COLS
-        print(f'Columns required: {cols_required}')
-        print(f'Loading intial clickstream to {self.device}')
-
-        if self.max_sequence_index == 11:
-            print('Initial clickstream writing to disk')
-            initial_clickstream = self.df[cols_required].values.astype(np.float32)
-            self._sequence_to_disk(initial_clickstream, 0)
-
-        print(f'Writing sequence to disk: {self.max_sequence_index - 1}')
-        self._sequence_to_disk(sequence.cpu().numpy(), self.max_sequence_index - 1)
-
-
-    def _sequence_to_disk(self, partition, sequence_index):
-        if self.save_s3:
-            s3_client = boto3.client(
-                's3',
-                aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
-                aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
-            )
-
-        if not os.path.exists(self.output_path):
-            os.makedirs(self.output_path)
-
-        partition_path = os.path.join(self.output_path, f'sequence_index_{sequence_index}.npz')
-        print(f'Saving to disk: {partition_path}')
-        np.savez_compressed(partition_path, partition)
-
-        if self.save_s3:
-            print(f'Uploading to s3: dissertation-data-dmiller/{partition_path}')
-            s3_client.upload_file(partition_path, 'dissertation-data-dmiller', partition_path)
-
-    def _lazy_load_shifted_index(self):
-
-        torch.cuda.empty_cache()
-        indx = self.sequences.pop(0)
-        torch_container = []
-        for col in SCALED_COLS + GENERATED_COLS:
-            sequence = self.df.groupby(GROUPBY_COLS)[col].shift(indx).fillna(0).values.astype(np.float16)
-            sequence_tensor = torch.tensor(sequence).to(self.device).half()
-            torch_container.append(sequence_tensor.unsqueeze(1))
-            torch.cuda.empty_cache()
-
-        yield torch.cat(torch_container, dim=1).half()
-
+from constant import (
+    INITIAL_LOAD_COLUMNS,
+    SCALED_COLS,
+    GENERATED_COLS,
+    ENCODED_COLS
+)
 def _encode_countries(x):
         if x == 'Finland':
             return 1
@@ -197,7 +54,11 @@ def _encode_countries(x):
         else:
             return 4
 
-import pdb
+def get_logger():
+    logger = logging.getLogger(__name__)
+    return logger
+
+
 
 def join_for_encodings(df):
 
@@ -284,6 +145,86 @@ def parse_args():
     parser.add_argument('--data_subset', type=int, default=60, help='Number of files to read from input path')
     return parser.parse_args()
 
+
+def encode_counts(df):
+    
+    user_count, project_count, country_count = (
+        df['user_id'].value_counts().reset_index().rename(columns={'user_id': 'user_count', 'index': 'user_id'}),
+        df['project_id'].value_counts().reset_index().rename(columns={'project_id': 'project_count', 'index': 'project_id'}),
+        df['country'].value_counts().reset_index().rename(columns={'country': 'country_count', 'index': 'country'})
+    )
+   
+    user_count['user_id_hash'] = user_count.index.values + 1
+    project_count['project_id_hash'] = project_count.index.values + 1
+    country_count['country_hash'] = country_count.index.values + 1
+
+    df = df.merge(user_count, on='user_id')
+    df = df.merge(project_count, on='project_id')
+    df = df.merge(country_count, on='country')
+    return df
+   
+def time_encodings(df):
+    """
+    Timestamp raw encoded in units of seconds
+    """
+    df['date_time'] = dd.to_datetime(df['date_time'])
+    df['timestamp_raw'] = df['date_time'].astype('int64') // 10**9
+    return df
+
+def rolling_window_session_10(df, logger):
+    logger.info('Calculating rolling session time averages')
+    df = df.reset_index()
+    df['row_count'] = df.index.values
+    rolling_10 = df.set_index('row_count') \
+        .groupby(['user_id', 'session_30']) \
+        .rolling(10, min_periods=1)['delta_last_event'].mean() \
+        .reset_index().rename(columns={'delta_last_event': 'rolling_10'}) \
+        .sort_values(by='row_count')
+
+    logger.info('Rolling averages calculated: joining to df')
+    df = df.set_index('row_count').join(rolling_10[['row_count', 'rolling_10']].set_index('row_count'))
+    logger.info('Rolling averages joined to df')
+    df = df.sort_values(by='date_time')
+    return df
+
+
+def expanding_session_time_delta(df, logger):
+    logger.info('Calculating expanding session time averages')
+    df = df.reset_index()
+    df['row_count'] = df.index.values
+    expanding_window = df.set_index('row_count') \
+        .groupby(['user_id', 'session_30']) \
+        .expanding(min_periods=1)['delta_last_event'].mean() \
+        .reset_index().rename(columns={'delta_last_event': 'expanding_click_average'}) \
+        .sort_values(by='row_count')
+    
+    logger.info('Expanding averages calculated: joining to df')
+    df = df.set_index('row_count').join(expanding_window[['row_count', 'expanding_click_average']].set_index('row_count'))
+    logger.info('Expanding averages joined to df')
+    df = df.sort_values(by='date_time')
+    return df
+
+def intra_session_stats(df, logger):
+    
+    logger.info('Bringing df to memory')
+    df = df.compute() 
+    df = df.sort_values(by=['date_time', 'user_id'])
+    
+    df = df.drop_duplicates(subset=['user_id', 'date_time'], keep='first')
+    logger.info('Calculating cum_event_count')
+    df['cum_session_event_count'] = df.groupby(['user_id', 'session_30'])['date_time'].cumcount() + 1
+    logger.info('Cum_event_count calculated: calculating delta_last_event')
+    df['delta_last_event'] = df.groupby(['user_id', 'session_30'])['date_time'].diff()
+    df['delta_last_event'] = df['delta_last_event'].dt.total_seconds()
+    df['delta_last_event'] = df['delta_last_event'].fillna(0)
+    df['cum_session_time_seconds'] = df.groupby(['user_id', 'session_30'])['delta_last_event'].cumsum()
+    logger.info('Beginning rolling window 10 calculation')
+    df = rolling_window_session_10(df, logger)
+    logger.info('Rolling window 10 calculation complete: beginning expanding window calculation')
+    df = expanding_session_time_delta(df, logger)
+    logger.info('Expanding window calculation complete: returning to dask')
+    return df
+
 def main(args):
     #
     torch.set_printoptions(sci_mode=False)
@@ -292,45 +233,61 @@ def main(args):
     np.set_printoptions(suppress=True)
     np.set_printoptions(precision=4)
 
+    logger =  get_logger()
+    logger.info(f'Running feature calculation with args')
+    logger.info(pformat(args.__dict__))
 
-    current_time = datetime.now().strftime("%Y-%m-%d-%H:%M:%S")
+    files = glob.glob(f'{args.input_path}/*.parquet')
+    files = list(sorted(files))
+    logger.info(f'Found {len(files)} files in {args.input_path}: {files[:args.data_subset]}')
+    df = dd.read_parquet(files[:args.data_subset], usecols=INITIAL_LOAD_COLUMNS)
+    logger.info(f'Loaded data: shape = {df.shape}, min_date, max_date: {df.date_time.min()}, {df.date_time.max()}')
+    df = df[INITIAL_LOAD_COLUMNS]
+    df['date_time'] = dd.to_datetime(df['date_time'])
+    logger.info(f'Sorting data by date_time')
+    df = df.sort_values(by='date_time')
+    logger.info('Finished sorting data: encoding value counts')
+    df = encode_counts(df)
+    logger.info('Finished encoding value counts: encoding time features')
+    df = time_encodings(df) 
+    
+    logger.info('Time encodings complete: encoding categorical features')
+    
+    df['country'] = df['country'].astype('category')
+    df['project_id'] = df['project_id'].astype('category')
+    df['user_id'] = df['user_id'].astype('category')
+    
+    
+    df = intra_session_stats(df, logger)
+    sample_df = df[df['user_id'] == 2371513].sort_values(by='date_time')
+    print(sample_df[['user_id', 'session_30', 'date_time', 'delta_last_event', 'rolling_10', 'expanding_click_average']].head(100))
+    
 
-    print(f"Starting {current_time}\nsubset of data: {args.data_subset}\nreading from {args.input_path}\nwrite_path {args.output_path}\nseq_list {args.seq_list}")
 
+    # df = prepare_for_sessionization(files, MinMaxScaler())
+    # print('Dataframe columns:')
+    # pp.pprint(list(df.columns))
 
-    files = glob.glob(f'{args.input_path}/*.csv')
-    files = sorted(list(files))
-    files = files[:args.data_subset]
-
-    print(f"Using {len(files)} files")
-
-
-    df = prepare_for_sessionization(files, MinMaxScaler())
-    print('Dataframe columns:')
-    pp.pprint(list(df.columns))
-
-    for seq in args.seq_list:
-        output_path = os.path.join(
-            args.output_path,
-            f'files_used_{args.data_subset}',
-        )
-        sessionize = SessionizeData(df, seq, output_path, save_s3=args.save_s3)
-        sessionize.generate_sequence()
-        print(f'Finished writing {seq} to disk')
-    print(f'Exiting application...')
+    # for seq in args.seq_list:
+    #     output_path = os.path.join(
+    #         args.output_path,
+    #         f'files_used_{args.data_subset}',
+    #     )
+    #     sessionize = SessionizeData(df, seq, output_path, save_s3=args.save_s3)
+    #     sessionize.generate_sequence()
+    #     print(f'Finished writing {seq} to disk')
+    # print(f'Exiting application...')
 
 
 
 
 class Arguments:
-    def __init__(self, seq_list):
-        self.seq_list = seq_list
-        self.input_path = 'datasets/frequency_encoded_data'
-        self.output_path = 'datasets/torch_ready_data_2'
+    def __init__(self):
+        self.input_path = 'datasets/labelled_session_count_data/'
+        self.output_path = 'datasets/calculated_features/'
         self.data_subset = 5
-        self.save_s3 = False
 
 
 if __name__ == "__main__":
-    args = Arguments([10, 20, 30])
+    args = Arguments()
     main(args)

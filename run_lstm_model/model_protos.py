@@ -9,27 +9,28 @@ ORDINAL_FEATURE_INDEX = 17
 
 class LSTMOrdinal(ModelBase):
     def __init__(self, n_features, n_seqeuences, hidden_size=32, dropout=0.2, lr=0.01, batch_size=256, zero_heuristic=False) -> None:
+        self.n_features = n_features
+        self.n_sequences = n_seqeuences
+        self.zero_heuristic = zero_heuristic
+        self.learning_rate = lr
+        self.batch_size = batch_size
+        self.model_name = 'ordinal'
+
         super().__init__()
+        
         self.lstm = nn.LSTM(
-            input_size=n_features - 3,
+            input_size=n_features,
             hidden_size=hidden_size,
             num_layers=2,
             batch_first=True,
             dropout=dropout
         )
-
-        self.learning_rate = lr
-        self.batch_size = batch_size
-        self.model_name = 'ordinal'
-
         self.output = nn.Linear(
             hidden_size,
             1
         )
 
-        self.n_sequences = n_seqeuences
 
-        self.zero_heuristic = zero_heuristic
         self.save_hyperparameters()
 
     def forward(self, x):

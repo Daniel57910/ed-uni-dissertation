@@ -10,20 +10,8 @@ SAMPLE_COLS = [
     'label_30',
     'session_30',
 ]
-def outer_apply_inflection_points(inflections):
-    def inner_find_session(row):
-        inflection_for_user = inflections[row['user_id']]
-        index_for_row = row['row_count']
-        return 1 + np.searchsorted(inflection_for_user, index_for_row, side='left')
 
-    return inner_find_session
-
-def get_inflection_points_5(subset):
-    return subset[subset['label_5'] == False].index.values
-
-def get_inflection_points_30(subset):
-    return subset[subset['label_30'] == False].index.values
-
+from pprint import pformat
 class SessionCalculate:
     logger = logging.getLogger(__name__)
     def __init__(self, df, write_path, use_gpu, test_env) -> None:
@@ -50,12 +38,14 @@ class SessionCalculate:
             self.df = cudf.from_pandas(self.df)
 
         self.df['diff_minutes'] = (self.df['diff_seconds'] / 60)
-        self.df['label_5'] = (self.df['diff_minutes'] < 5)
-        self.df['label_30'] = self.df['diff_minutes'] < 30
+        self.df['session_5'] = (self.df['diff_minutes'] < 5)
+        self.df['session_30'] = self.df['diff_minutes'] < 30
         
         self.logger.info(f'Labels calculated: removing rows with diff seconds > 0')
         self.logger.info(self.df[self.df['user_id'] == 10].head(10))
+       
         
+
         self.df = self.df.drop(columns=['next_date_time', 'diff_seconds'])
         self.logger.info(f'Number of rows following drop: {self.df.shape[0]}')
         self.logger.info(f'Sorting rows by date time and applying row count')
@@ -65,22 +55,39 @@ class SessionCalculate:
         self.logger.info('Calculating inflection points')
         self.df['user_id'] = self.df['user_id'].astype('int32')
        
-        inflections_5_merge = self.df[self.df['label_5'] == False]
-        inflections_30_merge = self.df[self.df['label_30'] == False]
-        
+        inflections_5_merge = self.df[self.df['session_5'] == False].sort_values(by=['date_time'])
+        inflections_30_merge = self.df[self.df['session_30'] == False].sort_values(by=['date_time']) 
+       
+        self.logger.info('Calculating session 5 inflections') 
         inflections_5_merge['session_5'] = inflections_5_merge.groupby('user_id').cumcount() + 1
+        self.logger.info('Calculating session 30 inflections')
         inflections_30_merge['session_30'] = inflections_30_merge.groupby('user_id').cumcount() + 1
         
-        inflections_5_merge = inflections_5_merge[['user_id', 'row_count', 'session_5']].sort_values(['row_count'])
-        inflections_30_merge = inflections_30_merge[['user_id', 'row_count', 'session_30']].sort_values(['row_count'])
+        inflections_5_merge = inflections_5_merge[['user_id', 'date_time', 'row_count', 'session_5']].sort_values(by=['row_count', 'user_id'])
+        inflections_30_merge = inflections_30_merge[['user_id', 'date_time', 'row_count', 'session_30']].sort_values(by=['row_count', 'user_id'])
+        inflections_5_merge = inflections_5_merge.drop(columns=['date_time'])
         
-    
-        self.df = pd.merge_asof(self.df, inflections_5_merge, on='row_count', by='user_id', direction='forward')
-        self.df = pd.merge_asof(self.df, inflections_30_merge, on='row_count', by='user_id', direction='forward')
+        inflections_30_merge = inflections_30_merge.rename(columns={'date_time': 'session_end_time'})
+
+        self.df = self.df.drop(columns=['session_5', 'session_30', 'diff_minutes'])
         
+        self.df = pd.merge_asof(self.df.sort_values(by=['row_count', 'user_id']), inflections_5_merge, on='row_count', by='user_id', direction='forward')
+        self.df = pd.merge_asof(self.df.sort_values(by=['row_count', 'user_id']), inflections_30_merge, on='row_count', by='user_id', direction='forward')
+        if self.use_gpu:
+            import cudf
+            self.logger.info('Bringing back to GPU for labelling')
+            self.df = self.df.to_pandas()
+            self.df['session_terminates_30_minutes'] = (self.df['session_end_time'] - self.df['date_time']).apply(lambda x: x.total_seconds() / 60) < 30
+            self.df = cudf.from_pandas(self.df)
+        else:
+            self.df['session_terminates_30_minutes'] = (self.df['session_end_time'] - self.df['date_time']).apply(lambda x: x.total_seconds() / 60) < 30
+ 
         self.logger.info('Inflections calculated')
-   
-    
+  
+        session_end_30_minutes = self.df[self.df['session_terminates_30_minutes'] == False].shape[0]
+        self.logger.info(f'Percent sessions end in 30 {session_end_30_minutes / self.df.shape[0]}')
+        self.logger.info(f'Columns for df')
+        self.logger.info(pformat(self.df.columns))
     def write_inflections_parquet(self):
     
         self.df = self.df.drop(columns=['index', 'level_0'])

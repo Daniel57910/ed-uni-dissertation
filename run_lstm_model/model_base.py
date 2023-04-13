@@ -1,14 +1,3 @@
-import pdb
-
-
-import torch
-import torch.nn as nn
-from pytorch_lightning import LightningModule
-from torchmetrics import Accuracy
-from torchmetrics import Precision
-from torchmetrics import Recall
-ZERO_HEURISTIC_RATE = 10
-ORDINAL_FEATURE_INDEX = 17
 
 import pdb
 
@@ -20,8 +9,6 @@ from torchmetrics import Precision
 from torchmetrics import Recall
 ZERO_HEURISTIC_RATE = 10
 ORDINAL_FEATURE_INDEX = 17
-
-
 
 class ModelBase(LightningModule):
 
@@ -105,21 +92,21 @@ class ModelBase(LightningModule):
 
     def _run_step(self, batch, type):
 
-        y, total_events, categorical_features, ordinal_features  = self._extract_features(batch)
+        metadata, features  = self._extract_features(batch)
+        y = metadata[:, 0].unsqueeze(1)
 
         if 'ordinal' in self.model_name:
-            y_hat = self(ordinal_features)
+            y_hat = self(features)
         
-        if 'embedded' in self.model_name:
-            concatenated = torch.cat((ordinal_features, categorical_features), dim=2)
-            assert concatenated.shape == (batch.shape[0], self.n_sequences, 19), 'concatenated shape is wrong'
-            y_hat = self(torch.cat((ordinal_features, categorical_features), dim=2))
+        # if 'embedded' in self.model_name:
+        #     concatenated = torch.cat((ordinal_features, categorical_features), dim=2)
+        #     assert concatenated.shape == (batch.shape[0], self.n_sequences, 19), 'concatenated shape is wrong'
+        #     y_hat = self(torch.cat((ordinal_features, categorical_features), dim=2))
 
-        if self.zero_heuristic:
-            y_hat = torch.where(total_events <= ZERO_HEURISTIC_RATE, torch.zeros_like(y_hat), y_hat)
+        # if self.zero_heuristic:
+        #     y_hat = torch.where(total_events <= ZERO_HEURISTIC_RATE, torch.zeros_like(y_hat), y_hat)
 
         loss = self.loss(y_hat, y)
-        y = y.int()
 
         if 'train' in type:
             acc = self.train_accuracy(y_hat, y)
@@ -134,32 +121,16 @@ class ModelBase(LightningModule):
         return loss, acc, prec, rec
 
     def _extract_features(self, tensor):
-
-        label, total_events, user_id, project_id, features, shifters = (
-            tensor[:, 0], tensor[:, 1],  tensor[:, 2],
-            tensor[:, 3], tensor[:, 5:5+17], tensor[:, 5+17:]
+        
+        metadata, features = tensor[:, :5], tensor[:, 5:]
+        
+        features = torch.flip(
+            torch.reshape(features, (features.shape[0], self.n_sequences, self.n_features)),
+            dims=[1]
         )
+        
+        return metadata, features
 
-        shifters = torch.reshape(shifters, (shifters.shape[0], self.n_sequences-1, 18))
-        shifter_project_id, shifter_features = shifters[:, :, 0], shifters[:, :, 1:]
-
-        project_id = torch.flip(torch.cat((project_id.unsqueeze(1), shifter_project_id), dim=1), dims=[1]).long()
-        features = torch.flip(torch.cat((features.unsqueeze(1), shifter_features), dim=1), dims=[1])
-
-        user_id = user_id.unsqueeze(1).repeat(1, self.n_sequences).long()
-        user_id = torch.where(project_id == 0, 0, user_id)
-
-        user_id, project_id = user_id.unsqueeze(2), project_id.unsqueeze(2)
-
-        user_project_concat = torch.cat((user_id, project_id), dim=2)
-
-        assert user_project_concat.shape == (user_id.shape[0], self.n_sequences, 2), 'user_project_concat shape is wrong'
-        return (
-            label.unsqueeze(1), 
-            total_events.unsqueeze(1), 
-            user_project_concat,
-            features
-        )
 
     def training_epoch_end(self, outputs):
 

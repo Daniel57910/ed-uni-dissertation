@@ -1,4 +1,4 @@
-# %load run_lstm_model.py
+#  %load run_lstm_model.py
 import argparse
 import logging
 import os
@@ -31,6 +31,10 @@ USER_INDEX = 9
 PROJECT_INDEX = 10
 COUNTRY_INDEX = 11
 
+
+np.set_printoptions(precision=8, suppress=True, linewidth=400)
+torch.set_printoptions(precision=8, linewidth=400, sci_mode=False)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 """
 Embedding dim based on cube root of number of unique values
 """
@@ -84,20 +88,20 @@ def parse_args():
     parser.add_argument('--model_type', type=str, default='ordinal')
 
     parser.add_argument('--batch_size', type=int, default=128)
-    parser.add_argument('--learning_rate', type=float, default=0.01)
+    parser.add_argument('--learning_rate', type=float, default=0.001)
 
     parser.add_argument('--n_workers', type=int, default=8)
-    parser.add_argument('--n_epochs', type=int, default=100)
+    parser.add_argument('--n_epochs', type=int, default=1)
 
     parser.add_argument('--hidden_size', type=int, default=32)
     parser.add_argument('--dropout', type=float, default=0.2)
     parser.add_argument('--n_sequences', type=int, default=10)
-    parser.add_argument('--n_features', type=int, default=20)
+    parser.add_argument('--n_features', type=int, default=18)
 
-    parser.add_argument('--data_input_path', type=str, default='datasets/torch_ready_data_4')
-    parser.add_argument('--data_partition', type=int, default=0)
+    parser.add_argument('--data_input_path', type=str, default='datasets/torch_ready_data_5')
+    parser.add_argument('--data_partition', type=int, default=1000)
 
-    parser.add_argument('--n_files', type=str, default='5')
+    parser.add_argument('--n_files', type=str, default='1')
 
     parser.add_argument('--progress_bar', type=bool, default=True)
     parser.add_argument('--checkpoint', type=str, default=None)
@@ -111,6 +115,7 @@ def parse_args():
 
 
 def get_model(
+    logger,
     model_type,
     n_features,
     n_sequences,
@@ -122,7 +127,7 @@ def get_model(
     n_files
 ):
     if model_type == 'ordinal':
-        print('Creating LSTMOrdinal model')
+        logger.info('Creating LSTMOrdinal model')
         return LSTMOrdinal(
             n_features,
             n_sequences,
@@ -166,15 +171,13 @@ def get_model(
 
 
 def main(args):
-    np.set_printoptions(precision=8, suppress=True)
-    np.set_printoptions(linewidth=400)
-
-    torch.set_printoptions(precision=4, sci_mode=False)
+    np.set_printoptions(precision=8, suppress=True, linewidth=400)
+    torch.set_printoptions(precision=8, linewidth=400, sci_mode=False)
     date_time = datetime.now().strftime("%Y_%m_%d_%H_%M")
 
-
+    logger = setup_logging()
     date_time = datetime.now().strftime("%Y_%m_%d_%H_%M")
-    print(f'Running experiment at {date_time}')
+    logger.info(f'Running experiment at {date_time}')
 
     s3_client = boto3.client(
         's3',
@@ -189,8 +192,8 @@ def main(args):
         args.data_partition)
 
     clickstream_data_loader = ClickstreamDataModule(npz_extractor.get_dataset_pointer(), args.batch_size, args.n_sequences + 1, args.n_features)
-
     model = get_model(
+        logger,
         args.model_type,
         args.n_features,
         args.n_sequences + 1,
@@ -201,11 +204,11 @@ def main(args):
         args.zero_heuristic,
         args.n_files
     )
-
     checkpoint_path = os.path.join(
         S3_BUCKET,
-        'lstm_experiments',
+        'lstm_experiments'
         'checkpoints',
+        'data_v5',
         str(args.n_files),
         args.model_type,
         f'sequence_length_{args.n_sequences}',
@@ -226,7 +229,7 @@ def main(args):
         callbacks += [progress_bar]
 
     metric_logger = TensorBoardLogger(
-        save_dir=f's3://dissertation-data-dmiller/lstm_experiments/results/{args.n_files}/{args.model_type}',
+        save_dir=f's3://dissertation-data-dmiller/lstm_experiments/results/data_v5/{args.n_files}/{args.model_type}',
         name=f'sequence_length_{args.n_sequences}/{args.data_partition}/{date_time}',
         flush_secs=60,
         log_graph=True,
@@ -258,42 +261,43 @@ def main(args):
     ])
 
 
-    if not args.validate_only:
-        print(f'Beginning training:\n {config}\nlog_path= tensorboard --logdir {metric_logger.save_dir}/{metric_logger.name}/version_0')
-
-        trainer = Trainer(
-            precision='bf16' if torch.cuda.is_available() else 16,
-            check_val_every_n_epoch=1,
-            accelerator=accelerator,
-            strategy=None,
-            devices=device_count,
-            max_epochs=args.n_epochs,
-            callbacks=callbacks,
-            logger=metric_logger,
-            enable_progress_bar=args.progress_bar,
-            log_every_n_steps=10
+    logger.info(f'Beginning validation:\n {config}')
+    logger.info(f'log_path= tensorboard --logdir {metric_logger.save_dir}/{metric_logger.name}/version_0')
+    trainer = Trainer(
+        precision='bf16' if torch.cuda.is_available() else 16,
+        check_val_every_n_epoch=1,
+        accelerator=accelerator,
+        strategy=None,
+        devices=device_count,
+        max_epochs=args.n_epochs,
+        callbacks=callbacks,
+        logger=metric_logger,
+        enable_progress_bar=args.progress_bar,
+        log_every_n_steps=10
         )
-
-        if args.checkpoint:
-            checkpoint_s3_path = os.path.join('s3://dissertation-data-dmiller', args.checkpoint)
-            print(f'Downloading checkpoint from {checkpoint_s3_path}')
-            trainer.fit(model, ckpt_path=checkpoint_s3_path, datamodule=clickstream_data_loader)
-        else:
-            trainer.fit(model, datamodule=clickstream_data_loader)
-    else:
+    
+    if args.checkpoint:
         checkpoint_s3_path = os.path.join('s3://dissertation-data-dmiller', args.checkpoint)
-        # print(f'Downloading checkpoint from {checkpoint_s3_path}')
-        # model.load_from_checkpoint(checkpoint_s3_path)
-        # auc_user_val, auc_user_test = (
-        #     auc_by_user_bin(model, clickstream_data_loader.val_dataloader(), args.n_sequences, "val"),
-        #     auc_by_user_bin(model, clickstream_data_loader.test_dataloader(), args.n_sequences, "test")
-        # )
+        logger.info(f'Running model from checkpoint: {checkpoint_s3_path}')
+        trainer.fit(model, ckpt_path=checkpoint_s3_path, datamodule=clickstream_data_loader)
+    else:
+        logger.info('Running model from scratch')
+        trainer.fit(model, datamodule=clickstream_data_loader) 
+            
 
-        # df_val = pd.DataFrame(auc_user_val, columns=['user_bin', 'acc', 'prec', 'rec', 'f1'])
-        # df_test = pd.DataFrame(auc_user_test, columns=['user_bin', 'acc', 'prec', 'rec', 'f1'])
+        # checkpoint_s3_path = os.path.join('s3://dissertation-data-dmiller', args.checkpoint)
+        # # logger.info(f'Downloading checkpoint from {checkpoint_s3_path}')
+        # # model.load_from_checkpoint(checkpoint_s3_path)
+        # # auc_user_val, auc_user_test = (
+        # #     auc_by_user_bin(model, clickstream_data_loader.val_dataloader(), args.n_sequences, "val"),
+        # #     auc_by_user_bin(model, clickstream_data_loader.test_dataloader(), args.n_sequences, "test")
+        # # )
 
-        # df_val.to_csv(f'auc_user_val_seq_{args.n_sequences}_heuristic_{args.zero_heuristic}.csv') 
-        # df_test.to_csv(f'auc_user_test_seq_{args.n_sequences}_heuristic_{args.zero_heuristic}.csv')
+        # # df_val = pd.DataFrame(auc_user_val, columns=['user_bin', 'acc', 'prec', 'rec', 'f1'])
+        # # df_test = pd.DataFrame(auc_user_test, columns=['user_bin', 'acc', 'prec', 'rec', 'f1'])
+
+        # # df_val.to_csv(f'auc_user_val_seq_{args.n_sequences}_heuristic_{args.zero_heuristic}.csv') 
+        # # df_test.to_csv(f'auc_user_test_seq_{args.n_sequences}_heuristic_{args.zero_heuristic}.csv')
 
 if __name__ == '__main__':
     args = parse_args()

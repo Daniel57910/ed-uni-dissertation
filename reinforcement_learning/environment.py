@@ -2,146 +2,190 @@ import gym
 import argparse
 import numpy as np
 import torch
-from stable_baselines3.common.env_checker import check_env
-from npz_extractor import NPZExtractor
 import pdb
-USER_INDEX = 3
-N_EVENT_INDEX = 1
+
+USER_INDEX = 1
+SESSION_INDEX = 2
+TASK_INDEX = 3
+
+N_EVENT_INDEX = -1
+
+USER_IN_SESSION_INDEX = 0
+SESSION_COUNT_INDEX = 1
+TASK_IN_SESSION_INDEX = 2
+REWARD_ALLOCATED_INDEX = 3
+
+SESSION_FINISHED_INDEX = -1
+
+CUM_PLATFORM_TIME_INDEX = 4
+METADATA_INDEX = 13
 import logging
-
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--read_path', type=str, default='datasets/torch_ready_data_4/')
-    parser.add_argument('--n_files', type=str, default='5')
-    parser.add_argument('--n_sequences', type=int, default=10)
-    parser.add_argument('--n_features', type=int, default=17)
-    
-    args = parser.parse_args()
-    return args
-
+from scipy.stats import norm 
+from stable_baselines3.common.logger import TensorBoardOutputFormat
 class CitizenScienceEnv(gym.Env):
     
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
-    
+    logger = logging.getLogger(__name__) 
     metadata = {'render.modes': ['human']}
     
-    def __init__(self, unique_users, trajectories, initial_user, n_sequences, n_features) -> None:
+    def __init__(self, user_sessions, experience_dataset, n_sequences, n_features) -> None:
         """
         trajectories: dictionary of user_id to their respective trajectories.
         n_sequences: number of sequences used for preprocessing.
         n_features: number of features used for preprocessing.
         """
         super(CitizenScienceEnv, self).__init__()
-        self.unique_users = unique_users
-        self.trajectories = trajectories
-        self.comp_bin = {}
-        self.comp_bin[initial_user] = {
-            'n_events': 0,
-            'award_2_events': False,
-        }
+        self.user_sessions = user_sessions
+        self.experience_dataset = experience_dataset
 
-        self.observation_space = gym.spaces.Sequence(
-            gym.spaces.Box(low=0, high=1, shape=(n_sequences + 1, n_features + 1), dtype=np.float32)
-        )
-        self.action_space = gym.spaces.Discrete(1)
+        self.action_space = gym.spaces.Discrete(2)
+        self.observation_space = gym.spaces.Box(low=0, high=1, shape=(n_sequences + 1, n_features), dtype=np.float32)
         self.n_sequences = n_sequences
         self.n_features = n_features
-        self.user = initial_user
-        self.user_index = 0
-        self.current_step = 0
-        self.dist = torch.distributions.Normal(loc=2, scale=0.5)
+        self.current_session = None
         
-    def _extract_features(self, tensor):
+    def _extract_features(self, feature_array):
+        
+        metadata, features = feature_array[:, :METADATA_INDEX], feature_array[:, METADATA_INDEX:]
+        features = features.reshape((features.shape[0], self.n_sequences + 1, self.n_features))
+        features = np.flip(features, axis=1).squeeze(0)
+        return metadata.squeeze(0), features
 
-        label, total_events, user_id, features, shifters = (
-            tensor[0], tensor[1], tensor[3], tensor[5:5+self.n_features], tensor[5+self.n_features:]
-        )
+    def _state(self, user, session, task_count):
+        
+        """
+        get index of current state
+        """ 
+        current_state = self.experience_dataset[
+            (self.experience_dataset[:, USER_INDEX] == user) &
+            (self.experience_dataset[:, SESSION_INDEX] == session) &
+            (self.experience_dataset[:, TASK_INDEX] == task_count)
+        ]
 
-        shifters = torch.reshape(shifters, (self.n_sequences, self.n_features + 1))
-        shifter_features = shifters[:, 1:]
-        features = torch.unsqueeze(features, 0)
-        features = torch.cat((features, shifter_features), dim=0)
-        label = torch.unsqueeze(label, 0).repeat(features.shape[0], 1)
-        event = torch.cat((label, features), dim=1)
-        return user_id, total_events, event
+        metadata, features = self._extract_features(current_state)
+        cum_platform_time = metadata[CUM_PLATFORM_TIME_INDEX]
+        return features, cum_platform_time
+
     
+    def _seed_user_session(self):
+        """
+        find all users sessions that have not been completed
+        select random user session from list
+        """
+        current_session = self.user_sessions[self.user_sessions['ended'] == 0].sample(1)
+        current_session['task_index'] = 1
+        current_session['total_reward'] = 0
+        self.current_session = current_session
+        
     def step(self, action):
-       
-        if len(self.comp_bin) == 58:
-            return True, None
-
-        trajectories = self.trajectories[self.user]
-        historical_event = trajectories[trajectories[:, N_EVENT_INDEX] == self.comp_bin[self.user]['n_events']]
+        
         self._take_action(action)
-        next_state = self._calculate_next_state(historical_event)
-        return False, next_state
-        
             
-    def _take_action(self, action):
-        if action == 1 and self.comp_bin[self.user]['n_events'] == 2:
-            self.comp_bin[self.user]['award_2_events'] = True
-    
-    def _calculate_next_state(self, historical_event):
-        """
-        Calculates the next state for the agent.
-        There are three cases:
-            1. The user has existing events in their session: return the next event.
-            2. The user has completed the total number of events and responds to incentive with probability > 0.5:
-                Calculate their probability of returning based on the gaussian proximity to the next incentive.
-                This is calculated by taking the log probability of the next event and adding a guassian noise.
-                Generate a new event based on the historical event and add it to the trajectory.
-            3: The user has completed the total number of events and does not respond to incentive with probability > 0.5:
-                Update the user and return the first event of the new user.
-        """
-        next_index = self.comp_bin[self.user]['n_events']
-        if next_index < self.trajectories[self.user].shape[0]:
-            self.comp_bin[self.user]['n_events'] += 1
-            self.logger.debug(f'Calculating next state for user: {self.user} next index: {next_index}')
-            return self.trajectories[self.user][next_index]
-        else:
-            self.logger.debug(f'Calculating next state for user: {self.user} next index: {next_index} not in range: {self.trajectories[self.user].shape[0]}')
-            probability_return = torch.exp(self.dist.log_prob(torch.tensor(next_index))) + self._guassian_noise()
-            self.logger.debug(f'Probability of returning: {probability_return}')
-            if probability_return > 0.5:
-                next_state = historical_event + self._positive_gaussian_noise_vector(historical_event.shape[1])
-                self.comp_bin[self.user]['n_events'] += 1
-                next_state[:, N_EVENT_INDEX] = self.comp_bin[self.user]['n_events']
-                self.trajectories[self.user] = torch.cat((self.trajectories[self.user], next_state), dim=0)
-                n_events = self.trajectories[self.user][:, N_EVENT_INDEX]
-                self.logger.info(f'User: {self.user} has returned at step: {n_events}, from completing {self.comp_bin[self.user]["n_events"]} events')
-                return next_state
-            else:
-                self._update_user()
-                current_trajcectory = self.trajectories[self.user]
-                current_step = self.comp_bin[self.user]['n_events']
-                self.logger.info(f'Beggining new trajectory for user: {self.user} at step: {current_step}')
-                return current_trajcectory[current_trajcectory[:, N_EVENT_INDEX] == current_step]
-
-    def _update_user(self):
-        self.user = self._get_next_user()
-        self.comp_bin[self.user] = {
-            'award_2_events': False,
-            'n_events': 0,
-        }
+        state, rewards, done, meta = self._calculate_next_state() 
+        if not done:
+            self._update_session_metadata(self.current_session)
         
-    def _guassian_noise(self):
-        return torch.randn(1) * (0.1**0.5) 
-    
-    def _positive_gaussian_noise_vector(self, size):
-        positive_gauss_noise = torch.abs(torch.randn(size) * (0.1**0.5)).unsqueeze(0)
-        positive_gauss_noise[:, N_EVENT_INDEX] = 0
-        return positive_gauss_noise
+        return state, rewards, done, meta
 
-    def _get_next_user(self):
-        self.user_index += 1
-        next_user = self.unique_users[self.user_index].int().item()
-        return next_user
+    def _update_session_metadata(self, current_session):
+        self.user_sessions.loc[current_session.index] = current_session 
+        
+    def _calculate_next_state(self):
+        
+        next_state = self.current_session['task_index'] + 1
+        extending = self._extending()
+        if not extending:
+            self.logger.debug(f'User: {self.current_session} has completed their session')
+            self._user_session_terminate()
+            if self.user_sessions['ended'].all():
+                self.logger.debug('All users have completed their sessions')
+                return None, self.user_sessions['total_reward'].sum().astype(float), True, {}
+            
+            self._seed_user_session()
+            user, session, count = self.current_session[['user_id', 'session_id', 'task_index']].values[0]
+            return (
+                self._state(user, session, count)[0], 
+                self.user_sessions['total_reward'].sum().astype(float),
+                False,
+                {}
+            )
+        self.logger.debug(f'User: {self.current_session} has moving to next state: {next_state}')
+        self.current_session['task_index'] = next_state
+        user, session, count = self.current_session[['user_id', 'session_id', 'task_index']].values[0]
+        state, cum_platform_time = self._state(user, session, count)
+        self.current_session['total_reward'] = cum_platform_time
+        return (
+            state,
+            self.user_sessions['total_reward'].sum().astype(float),
+            False,
+            {}
+        )
     
+    
+    def _extending(self):
+        current_session = self.current_session.to_dict('records')[0]
+        if current_session['task_index'] == current_session['counts']:
+            return False
+    
+        if current_session['task_index'] <= current_session['sim_counts']:
+            return True
+
+        continue_session = self._probability_extending(current_session)
+        return all([continue_session >= 0.3, continue_session < 0.9])
+    
+    
+    def _probability_extending(self, current_session):
+        if current_session['incentive_index'] == 0:
+            return 0
+        else:
+            continue_session = norm(
+                loc=current_session['incentive_index'],
+                scale=5
+            ).cdf(current_session['task_index']) + self._gaussian_noise()
+       
+        return continue_session
+        
+    def _gaussian_noise(self):
+        return np.random.normal(0, 0.1, 100).sum() / 10
+     
+    def _user_session_terminate(self):
+        self.current_session['ended'] = 1
+        self._update_session_metadata(self.current_session)
+    
+    def _take_action(self, action):
+        
+        current_session = self.current_session.to_dict('records')[0]
+        
+        if current_session['incentive_index'] > 0 or action == 0:
+            self.logger.debug(f'Incentive already allocation for session or no-op: {action}, {current_session}')
+            return
+        
+    
+        self.logger.debug('Taking action and allocating incentive')
+        self.current_session['incentive_index'] = self.current_session['task_index']
+        self.current_session['reward_allocated'] = action
+        
+        self.logger.debug('Taking action and allocating incentive: updating user session')
+        self.logger.debug(f'User session: {self.current_session}')
+
     def reset(self):
-        self.current_step = 0
-        return self._extract_features(self.citizen_science_dataset[self.current_step])
-
-    def render(self, mode='human', close=False):
-        print(f'Current Step: {self.current_step}')
+        self.user_sessions = self.user_sessions.sample(frac=1)
+        self.user_sessions['incentive_index'] = 0
+        self.user_sessions['task_index'] = 0
+        self.user_sessions['ended'] = 0
+        self.user_sessions['total_reward'] = 0
+        self.user_sessions['total_reward'] = self.user_sessions['total_reward'].astype(float)
+        
+        self._seed_user_session()
+        self._update_session_metadata(self.current_session)
+        user, session, count = self.current_session[['user_id', 'session_id', 'task_index']].values[0]
+        return self._state(user, session, count)[0]
+        
     
+    def render(self, mode='human'):
+        print('rendering')
+        
+    def dists(self):
+        incentive_index = self.user_sessions['incentive_index'].values
+        distance_end = (self.user_sessions['counts'] - self.user_sessions['incentive_index']).values
+        distance_reward = (self.user_sessions['total_reward'] - self.user_sessions['incentive_index']).values
+        return np.array([incentive_index, distance_end, distance_reward])

@@ -1,86 +1,89 @@
+from sessionize import SessionizeData
+import pandas as pd
+import dask.dataframe as dd
+from sklearn.preprocessing import MinMaxScaler
+from constant import (
+    TORCH_LOAD_COLS,
+    OUT_FEATURE_COLUMNS,
+    GROUPBY_COLS
+)
+
 import torch
-import boto3
+import numpy as np
+from pprint import pformat
+import logging
 import os
-if torch.cuda.is_available():
-    import GPUtil
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-class SessionizeData:
-    def __init__(self, df, max_sequence_index, write_path, partition_list=PARTITION_LIST, save_s3=True):
-        self.df = df
-        self.max_sequence_index = max_sequence_index + 1
-        self.min_sequence_index = self.max_sequence_index - 10
-        self.device = self._device()
-        self.sequences = numpy.arange(self.min_sequence_index, self.max_sequence_index).tolist()
-        self.seq_container = []
-        self.torch_sequences = None
-        self.output_path = write_path
-        self.partition_list = partition_list
-        self.save_s3 = save_s3
+torch.set_printoptions(sci_mode=False)
+torch.set_printoptions(precision=4)
 
-    def _device(self):
-        return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+np.set_printoptions(suppress=True)
+np.set_printoptions(precision=4)
 
-    def _sequence_lazy(self):
-         return next(self._lazy_load_shifted_index())
-
-    def _shifters(self):
-        for _ in range(self.min_sequence_index, self.max_sequence_index):
-            print(f'Loading sequence: {_} -> {self.max_sequence_index}')
-            self.seq_container.append(self._sequence_lazy())
-        if torch.cuda.is_available():
-            GPUtil.showUtilization()
-
-        sequences = torch.cat(self.seq_container, dim=1).half()
-        return sequences
-
-    def generate_sequence(self):
-
-        print(f'Generating shifted clickstreams from {self.min_sequence_index} -> {self.max_sequence_index}')
-        sequence = self._shifters()
-
-        print(f'Shifters shape: {sequence.shape}')
-
-        cols_required =  ['label', 'total_events'] + ENCODED_COLS + SCALED_COLS + GENERATED_COLS
-        print(f'Columns required: {cols_required}')
-        print(f'Loading intial clickstream to {self.device}')
-
-        if self.max_sequence_index == 11:
-            print('Initial clickstream writing to disk')
-            initial_clickstream = self.df[cols_required].values.astype(np.float32)
-            self._sequence_to_disk(initial_clickstream, 0)
-
-        print(f'Writing sequence to disk: {self.max_sequence_index - 1}')
-        self._sequence_to_disk(sequence.cpu().numpy(), self.max_sequence_index - 1)
+def get_logger():
+    logger = logging.getLogger(__name__)
+    return logger
 
 
-    def _sequence_to_disk(self, partition, sequence_index):
-        if self.save_s3:
-            s3_client = boto3.client(
-                's3',
-                aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
-                aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
-            )
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-        if not os.path.exists(self.output_path):
-            os.makedirs(self.output_path)
+torch.set_printoptions(sci_mode=False, precision=4, linewidth=400)
 
-        partition_path = os.path.join(self.output_path, f'sequence_index_{sequence_index}.npz')
-        print(f'Saving to disk: {partition_path}')
-        np.savez_compressed(partition_path, partition)
+np.set_printoptions(suppress=True)
+np.set_printoptions(precision=4)
 
-        if self.save_s3:
-            print(f'Uploading to s3: dissertation-data-dmiller/{partition_path}')
-            s3_client.upload_file(partition_path, 'dissertation-data-dmiller', partition_path)
+def get_logger():
+    logger = logging.getLogger(__name__)
+    return logger
 
-    def _lazy_load_shifted_index(self):
 
-        torch.cuda.empty_cache()
-        indx = self.sequences.pop(0)
-        torch_container = []
-        for col in SCALED_COLS + GENERATED_COLS:
-            sequence = self.df.groupby(GROUPBY_COLS)[col].shift(indx).fillna(0).values.astype(np.float16)
-            sequence_tensor = torch.tensor(sequence).to(self.device).half()
-            torch_container.append(sequence_tensor.unsqueeze(1))
-            torch.cuda.empty_cache()
+def scale_feature_cols(df, scaler, scaler_columns):
+    df[scaler_columns] = scaler.fit_transform(df[scaler_columns])
+    return df
 
-        yield torch.cat(torch_container, dim=1).half()
+def main(args):
+    
+    logger = get_logger()
+    logger.info('Starting sessionize_users_cpu.py with arguments')
+    logger.info(pformat(args.__dict__))
+    
+    data_read = os.path.join(args.input_path, f'files_used_{args.data_subset}')
+
+    logger.info(f'Reading data from {data_read}')
+    df = pd.read_parquet(data_read, columns=TORCH_LOAD_COLS)
+    logger.info(f'Data read: {df.shape}')
+    logger.info('Casting date time and sorting by date time')
+    df['date_time'] = pd.to_datetime(df['date_time'])
+    df = df.sort_values(by=['date_time'])
+    logger.info('Data read: scaling scaler columns')
+    df = scale_feature_cols(df, MinMaxScaler(), OUT_FEATURE_COLUMNS)
+    logger.info('Scaling complete: implement sessionize')
+    
+    for seq_index in args.seq_list:
+
+        sessionize = SessionizeData(
+            df,
+            seq_index,
+            os.path.join(args.output_path, f'files_used_{args.data_subset}'),
+            [col for col in TORCH_LOAD_COLS if col != 'date_time'],
+            OUT_FEATURE_COLUMNS,
+            GROUPBY_COLS,
+            args.save_s3
+        )
+    
+        logger.info(f'Generating sequence for {seq_index}')
+        sessionize.generate_sequence()
+    
+    logger.info(f'Sessionize complete for sequences {args.seq_list}')
+   
+class Arguments:
+    seq_list = [10]
+    input_path = 'datasets/calculated_features'
+    output_path = 'datasets/torch_ready_data_main'
+    data_subset = 2
+    save_s3 = False
+
+if __name__ == '__main__':
+    args = Arguments()
+    main(args)

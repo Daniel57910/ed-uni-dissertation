@@ -12,19 +12,23 @@ import logging
 USER_INDEX = 1
 SESSION_INDEX = 2
 TIMESTAMP_INDEX = 11
-from stable_baselines3.common.logger import configure
+TRAIN_SPLIT = 0.7
+EVAL_SPLIT = 0.15
 import pandas as pd
 from stable_baselines3 import A2C
 from stable_baselines3.common.vec_env import DummyVecEnv
-from stable_baselines3.common.env_checker import check_env
 from datetime import datetime
 from stable_baselines3.common.vec_env import VecMonitor
-from pprint import pformat, pprint
+from pprint import pformat
 import os
+
+
 logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p', level=logging.INFO)
 np.set_printoptions(precision=4, linewidth=200, suppress=True)
 torch.set_printoptions(precision=2, linewidth=200, sci_mode=False)
 
+
+S3_BASELINE_PATH = 's3://dissertation-data-dmiller'
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--read_path', type=str, default='datasets/torch_ready_data')
@@ -39,8 +43,21 @@ def parse_args():
     args = parser.parse_args()
     return args
 
-def generate_metadata(dataset, logger):
+def train_eval_split(dataset):
+    train_split = int(dataset.shape[0] * TRAIN_SPLIT)
+    eval_split = int(dataset.shape[0] * EVAL_SPLIT)
+    test_split = dataset.shape[0] - train_split - eval_split
+    logger.info(f'Train size: 0:{train_split}, eval size: {train_split}:{train_split+eval_split}: test size: {eval_split}:{dataset.shape[0]}')
+    train_dataset, eval_dataset, test_split = dataset[:train_split], dataset[train_split:train_split+eval_split], dataset[train_split+eval_split:]
     
+    return {
+        'train': train_dataset,
+        'eval': eval_dataset,
+        'test': test_split
+    }
+
+def generate_metadata(dataset):
+     
     logger.info('Generating metadata tasks per session')
     sessions = pd.DataFrame(
         dataset[:, [USER_INDEX, SESSION_INDEX]],
@@ -82,8 +99,10 @@ def main(args):
     
     exec_time = datetime.now().strftime("%Y-%m-%d-%H-%M")
     logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p', level=logging.INFO)
+    global logger
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
+    
     
     read_path, n_files, n_sequences, n_features, n_epochs, device = (
         args.read_path, 
@@ -99,25 +118,27 @@ def main(args):
         n_files,
         n_sequences,
         None,
-        1000
+        10000
     )
    
     logger.info(f'Starting experiment at {exec_time}') 
     logger.info(f'Extracting dataset from npz files to tensor' )
     dataset = np.concatenate(npz_extractor.get_dataset_pointer(), axis=1)
-
+    datasets = train_eval_split(dataset)
+    train_data = datasets['train']
+ 
     logger.info(f'Dataset shape: {dataset.shape}: generating metadata tensor')
-    sessions = generate_metadata(dataset, logger)
-    logger.info(f'Metadata shape: {sessions.shape}')
+    sessions_train = generate_metadata(train_data)
+    logger.info(f'Metadata train: {sessions_train.shape}')
     logger.info('Creating vectorized training and evaluation environments')
     
-    citizen_science_vec = DummyVecEnv([lambda: CitizenScienceEnv(sessions, dataset, n_sequences, n_features) for _ in range(2)])
-    citizen_science_vec_eval = DummyVecEnv([lambda: CitizenScienceEnv(sessions, dataset, n_sequences, n_features) for _ in range(2)])
-    
+    citizen_science_vec = DummyVecEnv([lambda: CitizenScienceEnv(sessions_train, train_data, n_sequences, n_features) for _ in range(2)])
+
     logger.info(f'Vectorized environments created, wrapping with monitor')
     
-    monitor_train, monitor_eval = VecMonitor(citizen_science_vec), VecMonitor(citizen_science_vec_eval)
+    monitor_train, monitor_eval = VecMonitor(citizen_science_vec), VecMonitor(citizen_science_vec)
     base_path = os.path.join(
+        S3_BASELINE_PATH,
         'reinforcement_learning_incentives',
         f'n_files_{n_files}',
         'results',
@@ -162,21 +183,16 @@ def main(args):
         'tensorboard_dir: {}'.format(tensorboard_dir),
         'checkpoint_dir: {}'.format(checkpoint_dir)
     ]))
-    
-    if not os.path.exists(tensorboard_dir):
-        os.makedirs(tensorboard_dir)
-
 
     agent.learn(
         total_timesteps=int(10e7),
-        log_interval=10, 
+        log_interval=100, 
         progress_bar=True,
         callback=callback_list
     )
     
 
-
-
 if __name__ == '__main__':
+
     args = parse_args()
     main(args)

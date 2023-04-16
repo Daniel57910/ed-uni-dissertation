@@ -19,9 +19,12 @@ SESSION_FINISHED_INDEX = -1
 
 CUM_PLATFORM_TIME_INDEX = 4
 METADATA_INDEX = 13
+
 import logging
 from scipy.stats import norm 
 from stable_baselines3.common.logger import TensorBoardOutputFormat
+
+
 class CitizenScienceEnv(gym.Env):
     
     logger = logging.getLogger(__name__) 
@@ -42,6 +45,7 @@ class CitizenScienceEnv(gym.Env):
         self.n_sequences = n_sequences
         self.n_features = n_features
         self.current_session = None
+        self.current_episode = 0
         
     def _extract_features(self, feature_array):
         
@@ -137,9 +141,10 @@ class CitizenScienceEnv(gym.Env):
         if current_session['incentive_index'] == 0:
             return 0
         else:
+            scale = min(5, current_session['counts'] // 4)
             continue_session = norm(
                 loc=current_session['incentive_index'],
-                scale=5
+                scale=scale
             ).cdf(current_session['task_index']) + self._gaussian_noise()
        
         return continue_session
@@ -178,6 +183,7 @@ class CitizenScienceEnv(gym.Env):
         self._seed_user_session()
         self._update_session_metadata(self.current_session)
         user, session, count = self.current_session[['user_id', 'session_id', 'task_index']].values[0]
+        self.current_episode += 1
         return self._state(user, session, count)[0]
         
     

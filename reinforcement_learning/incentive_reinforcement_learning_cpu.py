@@ -17,6 +17,7 @@ from stable_baselines3 import A2C
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 from datetime import datetime
 from stable_baselines3.common.vec_env import VecMonitor
+from stable_baselines3 import check_env
 from npz_extractor import NPZExtractor
 from pprint import pformat
 import os
@@ -118,9 +119,13 @@ def main(args):
     environment = CitizenScienceEnv(df, session_ranges, n_sequences)
 
     state = environment.reset()
-    for _ in range(0, 12):
-        print(state)
-        state = environment._state()
+    done = False
+    while not done:
+        action = 0
+        state, reward, done, meta = environment.step(action)
+        print(reward, state.shape)
+
+
 
 if __name__ == "__main__":
     args = parse_args()

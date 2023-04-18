@@ -2,7 +2,7 @@ import gymnasium as gym
 import numpy as np
 import logging
 from scipy.stats import norm 
-from constant import METADATA
+from constant import METADATA, OUT_FEATURE_COLUMNS
 
 
 class CitizenScienceEnv(gym.Env):
@@ -105,9 +105,9 @@ class CitizenScienceEnv(gym.Env):
                 self.current_session.iloc[lookup:self.current_session_index] if \
                 self.current_session_index > self.n_sequences else self.current_session.iloc[:max(self.current_session_index, 1)]
         )
-        events = events[METADATA].values
+        events = events[OUT_FEATURE_COLUMNS].values
         if lookup > 0:
-            events = np.concatenate((np.zeros((lookup, len(METADATA))), events), axis=0)
+            events = np.concatenate((np.zeros((lookup, len(OUT_FEATURE_COLUMNS))), events), axis=0)
         self.current_session_index += 1
         return events
     

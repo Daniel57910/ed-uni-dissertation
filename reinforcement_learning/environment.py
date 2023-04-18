@@ -1,13 +1,12 @@
-import gymnasium as gym
+import gymnasium
 import numpy as np
-import logging
 from scipy.stats import norm 
 from constant import METADATA, OUT_FEATURE_COLUMNS
 
+import gym
 
 class CitizenScienceEnv(gym.Env):
     
-    logger = logging.getLogger(__name__) 
     metadata = {'render.modes': ['human']}
     
     def __init__(self, dataset, session_ranges, n_sequences):
@@ -33,50 +32,56 @@ class CitizenScienceEnv(gym.Env):
         session_id = np.random.choice(self.session_ranges)
         self.current_session = self._get_events(session_id)
         self.metadata = self._metadata()
-        self.current_session_index = 0
+        self.current_session_index = 1
+        self.reward = 0
         return self._state()
 
     def step(self, action):
         self._take_action(action)
-        self.reward = self.current_session.iloc[self.current_session_index]['reward']
         next_state, done, meta = self._calculate_next_state()
         if done:
-            self.metadata_container.append(self.metadata)
-    
-        self.current_session_index += 1
+            self.metadata['ended'] = self.current_session_index
+            self.metadata['platform_time'] = self.reward
+            self.metadata_container.append(self.metadata.values)
+            return next_state, self.reward, done, meta
+        self.reward += (self.current_session.iloc[self.current_session_index]['reward'] / 60)
+        self.current_session_index += 1        
         return next_state, self.reward, done, meta
     
     def _metadata(self):
-        session_metadata = self.current_session.iloc[0][['user_id', 'session_30_raw', 'session_30_raw', 'session_size', 'sim_size']]
+        session_metadata = self.current_session.iloc[0][['user_id', 'session_30_raw', 'session_size', 'sim_size']]
         session_metadata['ended'] = 0
         session_metadata['incentive_index'] = 0
+        return session_metadata
     
     
     def _calculate_next_state(self):
-        if (self.current_session_index == self.current_session.shape[0]) or not self._continuing_in_session():
-            self.metadata['ended'] = 1
+        
+        if self.current_session_index == self.current_session.shape[0]:
             return None, True, {}
         
-        return self._state(), False, {}
-        
+        if self._continuing_in_session():
+            return self._state(), False, {}
+      
+        return None, True, {}
   
     def _continuing_in_session(self):
-        sim_counts = self.current_session['sim_size'].values[0]
-        if self.current_session <= sim_counts:
+        sim_counts = self.metadata['sim_size']
+        if self.current_session_index < sim_counts:
             return True
         
         extending_session = self._probability_extending_session()
         
-        return all([extending_session >= 3, extending_session <= .85])
+        return all([extending_session >= .3, extending_session <= .8])
         
     
     def _probability_extending_session(self):
-        if self.current_session['incentive_index'].values[0] == 0:
+        if self.metadata['incentive_index'] == 0:
             return 0
         
-        scale = min(5, self.current_session['session_size'].values[0])
+        scale = max(5, int(self.metadata['session_size'] / 4))
         continue_session = norm(
-            loc=self.current_session['incentive_index'].values[0],
+            loc=self.metadata['incentive_index'],
             scale=scale
         ).cdf(self.current_session_index)
         
@@ -90,24 +95,22 @@ class CitizenScienceEnv(gym.Env):
         return subset.sort_values('cum_session_event_raw').reset_index(drop=True)
     
     def _take_action(self, action):
-        if action == 0 or self.metadata['incentive_index'].values[0] == 1:
+        if action == 0 or self.metadata['incentive_index'] > 0:
             return
         
         self.metadata['incentive_index'] = self.current_session_index
         
     def _state(self):
 
+        if self.current_session_index > self.n_sequences:
+            events = self.current_session.iloc[self.current_session_index - (self.n_sequences + 1):self.current_session_index][OUT_FEATURE_COLUMNS].values
+            
+        else:
+            delta = (self.n_sequences + 1)- self.current_session_index
+            zero_cat = np.zeros((delta, len(OUT_FEATURE_COLUMNS)))
+            events = self.current_session.iloc[:max(self.current_session_index, 1)][OUT_FEATURE_COLUMNS].values
+            events = np.concatenate((zero_cat, events), axis=0)
+            
 
-
-
-        lookup = abs(self.current_session_index - (self.n_sequences + 1))
-        events = (
-                self.current_session.iloc[lookup:self.current_session_index] if \
-                self.current_session_index > self.n_sequences else self.current_session.iloc[:max(self.current_session_index, 1)]
-        )
-        events = events[OUT_FEATURE_COLUMNS].values
-        if lookup > 0:
-            events = np.concatenate((np.zeros((lookup, len(OUT_FEATURE_COLUMNS))), events), axis=0)
-        self.current_session_index += 1
-        return events
-    
+        return events.astype(np.float32)
+  

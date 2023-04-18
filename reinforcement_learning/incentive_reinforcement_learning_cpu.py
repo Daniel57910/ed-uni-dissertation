@@ -4,7 +4,7 @@ import torch
 torch.set_printoptions(precision=4, linewidth=200, sci_mode=False)
 np.set_printoptions(precision=4, linewidth=200, suppress=True)
 from stable_baselines3.common.callbacks import EvalCallback, CallbackList, StopTrainingOnMaxEpisodes, CheckpointCallback
-from stable_baselines3 import PPO, A2C
+from stable_baselines3 import PPO, A2C, DQN
 import logging
 USER_INDEX = 1
 SESSION_INDEX = 2
@@ -13,17 +13,17 @@ TIMESTAMP_INDEX = 11
 TRAIN_SPLIT = 0.7
 EVAL_SPLIT = 0.15
 import pandas as pd
-from stable_baselines3 import A2C
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 from datetime import datetime
 from stable_baselines3.common.vec_env import VecMonitor
-from stable_baselines3 import check_env
+from stable_baselines3.common.env_checker import check_env
 from npz_extractor import NPZExtractor
 from pprint import pformat
 import os
 from environment import CitizenScienceEnv
 from callback import DistributionCallback
 from constant import TORCH_LOAD_COLS, OUT_FEATURE_COLUMNS, METADATA, LABEL
+from sklearn.preprocessing import MinMaxScaler
 
 logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p', level=logging.INFO)
 np.set_printoptions(precision=4, linewidth=200, suppress=True)
@@ -37,12 +37,8 @@ def parse_args():
     parser.add_argument('--read_path', type=str, default='datasets/calculated_features/files_used')
     parser.add_argument('--n_files', type=str, default=2)
     parser.add_argument('--n_sequences', type=int, default=10)
-    parser.add_argument('--n_features', type=int, default=18)
     parser.add_argument('--n_episodes', type=int, default=20)
-    parser.add_argument('--return_distribution', type=str, default='stack_overflow_v1')
-    parser.add_argument('--agent', type=str, default='constant_20')
     parser.add_argument('--device', type=str, default='cpu')
-    parser.add_argument('--event_sample', type=float, default=0.25)
     
     args = parser.parse_args()
     return args
@@ -63,8 +59,10 @@ def train_eval_split(dataset, logger):
 def generate_metadata(dataset, logger):
     
     session_size = dataset.groupby(['user_id', 'session_30_raw']).size().reset_index(name='session_size')
+    session_minutes = dataset.groupby(['user_id', 'session_30_raw'])['cum_session_time_raw'].max().reset_index(name='session_minutes')
     session_size['sim_size'] = (session_size['session_size'] * .75).astype(int).apply(lambda x: x if x > 1 else 1)
     dataset = dataset.merge(session_size, on=['user_id', 'session_30_raw'])
+    dataset = dataset.merge(session_minutes, on=['user_id', 'session_30_raw'])
     return dataset
     
 
@@ -98,14 +96,12 @@ def main(args):
     
     logger.info('Starting Incentive Reinforcement Learning')
     
-    read_path, n_files, n_sequences, n_features, n_episodes, device, event_sample = (
+    read_path, n_files, n_sequences, n_episodes, device = (
         args.read_path, 
         args.n_files, 
         args.n_sequences, 
-        args.n_features, 
         args.n_episodes, 
         args.device,
-        args.event_sample
     )
     
     logger.info(f'Reading data from {read_path}_{n_files}.parquet')
@@ -113,20 +109,46 @@ def main(args):
     logger.info('Data read: generating metadata')
     df['reward'] = df['delta_last_event']
     df = generate_metadata(df, logger)
+    df[OUT_FEATURE_COLUMNS] = MinMaxScaler().fit_transform(df[OUT_FEATURE_COLUMNS])
     max_session = df['session_30_raw'].max()
+    unique_episodes = df[['user_id', 'session_30_raw']].drop_duplicates().shape[0]
     session_ranges = np.arange(1, max_session + 1)
     logger.info(f'Metadata generated: instantiating environment: session_ranges: 1 => {max_session}')
-    environment = CitizenScienceEnv(df, session_ranges, n_sequences)
 
-    state = environment.reset()
-    done = False
-    while not done:
-        action = 0
-        state, reward, done, meta = environment.step(action)
-        print(reward, state.shape)
+    citizen_science_vec = DummyVecEnv([lambda: CitizenScienceEnv(df, session_ranges, n_sequences) for _ in range(100)])
+    callback_max_episodes = StopTrainingOnMaxEpisodes(max_episodes=10, verbose=1)
+    monitor_train = VecMonitor(citizen_science_vec)
+    logger.info(f'Vectorized environments created, wrapping with monitor')
+
+    base_path = os.path.join(
+        S3_BASELINE_PATH,
+        'reinforcement_learning_incentives',
+        f'n_files_{n_files}',
+        'results',
+        exec_time,
+    ) 
+    
+    tensorboard_dir, checkpoint_dir = (
+        os.path.join(base_path, 'training_metrics'),
+        os.path.join(base_path, 'checkpoints')
+    )
+    
+    model = A2C("MlpPolicy", monitor_train, verbose=2, tensorboard_log=tensorboard_dir)
+            
+    logger.info(pformat([
+        'n_epochs: {}'.format(n_episodes),
+        'read_path: {}'.format(read_path),
+        'n_files: {}'.format(n_files),
+        'n_sequences: {}'.format(n_sequences),
+        'total_timesteps: {}'.format(df.shape),
+        f'unique_episodes: {unique_episodes}',
+        'device: {}'.format(device),
+        'tensorboard_dir: {}'.format(tensorboard_dir),
+        'checkpoint_dir: {}'.format(checkpoint_dir)
+    ]))
 
 
-
+    model.learn(total_timesteps=100_000, progress_bar=True, log_interval=10)
 if __name__ == "__main__":
     args = parse_args()
     main(args)

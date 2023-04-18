@@ -1,1 +1,4 @@
-understand curves
+deploy code to gpu and ensure works at scale
+add additional logging and metrics
+incorporate custom policy into the training loop
+begin scaling out experiment

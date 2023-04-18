@@ -50,6 +50,7 @@ class CitizenScienceEnv(gym.Env):
     def _extract_features(self, feature_array):
         
         metadata, features = feature_array[:, :METADATA_INDEX], feature_array[:, METADATA_INDEX:]
+        
         features = features.reshape((features.shape[0], self.n_sequences + 1, self.n_features))
         features = np.flip(features, axis=1).squeeze(0)
         return metadata.squeeze(0), features
@@ -77,7 +78,6 @@ class CitizenScienceEnv(gym.Env):
         """
         current_session = self.user_sessions[self.user_sessions['ended'] == 0].sample(1)
         current_session['task_index'] = 1
-        current_session['total_reward'] = 0
         self.current_session = current_session
         
     def step(self, action):
@@ -134,7 +134,7 @@ class CitizenScienceEnv(gym.Env):
             return True
 
         continue_session = self._probability_extending(current_session)
-        return all([continue_session >= 0.3, continue_session < 0.9])
+        return all([continue_session >= 0.3, continue_session <= 0.85])
     
     
     def _probability_extending(self, current_session):
@@ -145,12 +145,11 @@ class CitizenScienceEnv(gym.Env):
             continue_session = norm(
                 loc=current_session['incentive_index'],
                 scale=scale
-            ).cdf(current_session['task_index']) + self._gaussian_noise()
-       
+            ).cdf(current_session['task_index']) 
+            
         return continue_session
         
-    def _gaussian_noise(self):
-        return np.random.normal(0, 0.1, 100).sum() / 10
+
      
     def _user_session_terminate(self):
         self.current_session['ended'] = 1

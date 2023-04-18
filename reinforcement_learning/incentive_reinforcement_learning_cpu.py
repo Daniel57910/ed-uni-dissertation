@@ -8,6 +8,7 @@ from stable_baselines3 import PPO, A2C
 import logging
 USER_INDEX = 1
 SESSION_INDEX = 2
+CUM_SESSION_EVENT_RAW = 3
 TIMESTAMP_INDEX = 11
 TRAIN_SPLIT = 0.7
 EVAL_SPLIT = 0.15
@@ -19,7 +20,7 @@ from stable_baselines3.common.vec_env import VecMonitor
 from npz_extractor import NPZExtractor
 from pprint import pformat
 import os
-from environment import CitizenScienceEnv
+from environment_second import CitizenScienceEnv
 from callback import DistributionCallback
 
 logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p', level=logging.INFO)
@@ -39,7 +40,7 @@ def parse_args():
     parser.add_argument('--return_distribution', type=str, default='stack_overflow_v1')
     parser.add_argument('--agent', type=str, default='constant_20')
     parser.add_argument('--device', type=str, default='cpu')
-    parser.add_argument('--session_sample', type=float, default=1.0)
+    parser.add_argument('--event_sample', type=float, default=0.25)
     
     args = parser.parse_args()
     return args
@@ -65,15 +66,15 @@ def generate_metadata(dataset, logger):
         columns=['user_id', 'session_id']
     )
     
+    event_in_session = pd.DataFrame(
+        dataset[:, [USER_INDEX, SESSION_INDEX, CUM_SESSION_EVENT_RAW]],
+        columns=['user_id', 'session_id', 'event_in_session']
+    )
+    
+    event_in_session['event_in_session'] = event_in_session['event_in_session'].astype(int)
     sessions = sessions.groupby(['user_id', 'session_id']).size().reset_index(name='counts')
     sessions['sim_counts'] = (sessions['counts'] * 0.8).astype(int)
     sessions['sim_counts'] = sessions['sim_counts'].apply(lambda x: 1 if x == 0 else x)
-    sessions['incentive_index'] = 0
-    
-    sessions['task_index'] = 0
-    sessions['total_reward'] = 0
-    sessions['total_reward'] = sessions['total_reward'].astype(float)
-    sessions['ended'] = 0
     return sessions
 
 
@@ -104,14 +105,14 @@ def main(args):
     logger.setLevel(logging.INFO)
     
     
-    read_path, n_files, n_sequences, n_features, n_episodes, device, session_sample = (
+    read_path, n_files, n_sequences, n_features, n_episodes, device, event_sample = (
         args.read_path, 
         args.n_files, 
         args.n_sequences, 
         args.n_features, 
         args.n_episodes, 
         args.device,
-        args.session_sample
+        args.event_sample
     )
     
     npz_extractor = NPZExtractor(
@@ -119,26 +120,29 @@ def main(args):
         n_files,
         n_sequences,
         None,
-        10000
+        None
     )
     
-    cpu_count = os.cpu_count()
+    cpu_count = int(os.cpu_count() * .8)
    
     logger.info(f'Starting experiment at {exec_time}') 
     logger.info(f'Extracting dataset from npz files to tensor' )
     dataset = np.concatenate(npz_extractor.get_dataset_pointer(), axis=1)
-    datasets = train_eval_split(dataset, logger)
-    train_data = datasets['train']
- 
-    logger.info(f'Dataset shape: {dataset.shape}: generating metadata tensor')
+    logger.info('Dataset shape: {}'.format(dataset.shape))
+    train_data = train_eval_split(dataset, logger)['train']
+    logger.info(f'Following sampling: {train_data.shape}')
+    train_data = train_data[:int(train_data.shape[0] * event_sample)]
+    logger.info(f'Dataset shape: {train_data.shape}: generating metadata tensor')
     sessions_train = generate_metadata(train_data, logger)
     logger.info(f'Metadata train: {sessions_train.shape}')
-    sessions_train = sessions_train.sample(frac=session_sample)
     logger.info(f'resetting number of sessions to sample: {sessions_train.shape}')
 
     logger.info(f'Creating vectorized training environment: num envs: {cpu_count}')
-   
-    citizen_science_vec = SubprocVecEnv([lambda: CitizenScienceEnv(sessions_train, train_data, n_sequences, n_features) for _ in range(2)])
+  
+    env = CitizenScienceEnv(sessions_train, train_data, n_sequences, n_features)
+    state = env.reset()
+    return
+    citizen_science_vec = SubprocVecEnv([lambda: CitizenScienceEnv(sessions_train, train_data, n_sequences, n_features) for _ in range(cpu_count)])
 
     """
     Eval environment is not used in training and is used after training to evaluate the agent
@@ -159,11 +163,12 @@ def main(args):
     )
  
     monitor_train = VecMonitor(citizen_science_vec)
-    agent = A2C(
+    agent = PPO(
         'MlpPolicy',
         monitor_train,
         verbose=1,
         device=args.device,
+        batch_size=4096,
         tensorboard_log=tensorboard_dir,
     )
 
@@ -171,7 +176,7 @@ def main(args):
         save_freq=10000 // 2,
         name_prefix='a2c',
         save_path=checkpoint_dir,
-        verbose=1
+        verbose=1,
     )
         
     callback_max_episodes = StopTrainingOnMaxEpisodes(max_episodes=n_episodes, verbose=1)
@@ -188,7 +193,8 @@ def main(args):
         'total_timesteps: {}'.format(dataset.shape[0] -1),
         'device: {}'.format(device),
         'tensorboard_dir: {}'.format(tensorboard_dir),
-        'checkpoint_dir: {}'.format(checkpoint_dir)
+        'checkpoint_dir: {}'.format(checkpoint_dir),
+        'event_sample: {}'.format(event_sample)
     ]))
 
     agent.learn(
@@ -197,8 +203,9 @@ def main(args):
         progress_bar=True,
         callback=callback_list
     )
-    
-if __name__ == '__main__':
 
+
+
+if __name__ == "__main__":
     args = parse_args()
     main(args)

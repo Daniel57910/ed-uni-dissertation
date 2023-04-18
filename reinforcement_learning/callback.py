@@ -7,11 +7,10 @@ from torch.utils.tensorboard import SummaryWriter
 class DistributionCallback(BaseCallback):
 
     def _on_training_start(self) -> None:
-        self._dist_log_freq = 100
+        self._dist_log_freq = 1000
         self._reward_log_freq = 100
         output_formats = self.logger.output_formats
         self.tb_formatter = next(f for f in output_formats if isinstance(f, TensorBoardOutputFormat))
-
     
     def _on_step(self) -> bool:
         if self.n_calls % self._dist_log_freq == 0:
@@ -25,3 +24,15 @@ class DistributionCallback(BaseCallback):
                 self.tb_formatter.writer.flush()
             except Exception as e:
                 raise Exception('Unable to log distributions: {}'.format(e))
+        
+        if self.n_calls % self._reward_log_freq == 0:
+            episode_list = self.training_env.get_attr('current_episode')
+            rewards = self.training_env.get_attr('user_sessions')
+            reward_dict = {}
+            for episode, reward in zip(episode_list, rewards):
+                reward_dict[f'episode_{episode}'] = reward['total_reward'].sum()
+            
+            self.tb_formatter.writer.add_scalars(
+                'cum_reward', reward_dict, (self.n_calls // np.max(episode_list)) // self._reward_log_freq
+            )
+                

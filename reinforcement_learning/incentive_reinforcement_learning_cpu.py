@@ -5,6 +5,7 @@ torch.set_printoptions(precision=4, linewidth=200, sci_mode=False)
 np.set_printoptions(precision=4, linewidth=200, suppress=True)
 from stable_baselines3.common.callbacks import EvalCallback, CallbackList, StopTrainingOnMaxEpisodes, CheckpointCallback
 from stable_baselines3 import PPO, A2C, DQN
+from callback import DistributionCallback
 import logging
 USER_INDEX = 1
 SESSION_INDEX = 2
@@ -117,6 +118,8 @@ def main(args):
 
     citizen_science_vec = DummyVecEnv([lambda: CitizenScienceEnv(df, session_ranges, n_sequences) for _ in range(100)])
     callback_max_episodes = StopTrainingOnMaxEpisodes(max_episodes=10, verbose=1)
+    dist_callback = DistributionCallback()
+    callback_list = CallbackList([callback_max_episodes, dist_callback])
     monitor_train = VecMonitor(citizen_science_vec)
     logger.info(f'Vectorized environments created, wrapping with monitor')
 
@@ -148,7 +151,7 @@ def main(args):
     ]))
 
 
-    model.learn(total_timesteps=100_000, progress_bar=True, log_interval=10)
+    model.learn(total_timesteps=100000, progress_bar=True, log_interval=10, callback=callback_list)
 if __name__ == "__main__":
     args = parse_args()
     main(args)

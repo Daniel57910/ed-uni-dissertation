@@ -41,7 +41,7 @@ class CitizenScienceEnv(gym.Env):
         next_state, done, meta = self._calculate_next_state()
         if done:
             self.metadata['ended'] = self.current_session_index
-            self.metadata['platform_time'] = self.reward
+            self.metadata['reward'] = self.reward
             self.metadata_container.append(self.metadata.values)
             return next_state, self.reward, done, meta
         self.reward += (self.current_session.iloc[self.current_session_index]['reward'] / 60)
@@ -49,7 +49,7 @@ class CitizenScienceEnv(gym.Env):
         return next_state, self.reward, done, meta
     
     def _metadata(self):
-        session_metadata = self.current_session.iloc[0][['user_id', 'session_30_raw', 'session_size', 'sim_size']]
+        session_metadata = self.current_session.iloc[0][['user_id', 'session_30_raw', 'session_size', 'sim_size', 'session_minutes']]
         session_metadata['ended'] = 0
         session_metadata['incentive_index'] = 0
         return session_metadata
@@ -114,3 +114,6 @@ class CitizenScienceEnv(gym.Env):
 
         return events.astype(np.float32)
   
+    
+    def dists(self):
+        return self.metadata_container

@@ -3,6 +3,15 @@ import numpy as np
 from scipy.stats import norm 
 from constant import METADATA, OUT_FEATURE_COLUMNS
 
+METADATA_STAT_COLUMNS = [
+    'session_size',
+    'sim_size',
+    'session_minutes',
+    'ended',
+    'incentive_index',
+    'reward'
+]
+
 import gym
 
 class CitizenScienceEnv(gym.Env):
@@ -42,7 +51,7 @@ class CitizenScienceEnv(gym.Env):
         if done:
             self.metadata['ended'] = self.current_session_index
             self.metadata['reward'] = self.reward
-            self.metadata_container.append(self.metadata.values)
+            self.metadata_container.append(self.metadata[METADATA_STAT_COLUMNS].values)
             return next_state, self.reward, done, meta
         self.reward += (self.current_session.iloc[self.current_session_index]['reward'] / 60)
         self.current_session_index += 1        
@@ -52,6 +61,7 @@ class CitizenScienceEnv(gym.Env):
         session_metadata = self.current_session.iloc[0][['user_id', 'session_30_raw', 'session_size', 'sim_size', 'session_minutes']]
         session_metadata['ended'] = 0
         session_metadata['incentive_index'] = 0
+        session_metadata['reward'] = 0
         return session_metadata
     
     
@@ -116,4 +126,6 @@ class CitizenScienceEnv(gym.Env):
   
     
     def dists(self):
-        return self.metadata_container
+        metadata_container = self.metadata_container.copy()
+        self.metadata_container = []
+        return np.array(metadata_container)

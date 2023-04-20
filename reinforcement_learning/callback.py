@@ -7,7 +7,7 @@ from torch.utils.tensorboard import SummaryWriter
 class DistributionCallback(BaseCallback):
 
     def _on_training_start(self) -> None:
-        self._log_freq = 100
+        self._log_freq = 20
         output_formats = self.logger.output_formats
         self.tb_formatter = next(f for f in output_formats if isinstance(f, TensorBoardOutputFormat))
     
@@ -29,7 +29,7 @@ class DistributionCallback(BaseCallback):
             dist_session_end = (session_size - ended).mean()
             dist_incentive_session = (session_size - incentive_index).mean()
             dist_incentive_end = (ended - incentive_index).mean()
-            n_call = self.n_calls / 100
+            n_call = self.n_calls / 20
             
             self.tb_formatter.writer.add_scalar('time/session_time', dist_session_time, n_call)
             self.tb_formatter.writer.add_scalar('event/session_end', dist_session_end, n_call)

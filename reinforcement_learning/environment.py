@@ -18,7 +18,7 @@ class CitizenScienceEnv(gym.Env):
     
     metadata = {'render.modes': ['human']}
     
-    def __init__(self, dataset, session_ranges, n_sequences):
+    def __init__(self, dataset, n_sequences):
         """
         trajectories: dictionary of user_id to their respective trajectories.
         n_sequences: number of sequences used for preprocessing.
@@ -26,7 +26,6 @@ class CitizenScienceEnv(gym.Env):
         """
         super(CitizenScienceEnv, self).__init__()
         self.dataset = dataset
-        self.session_ranges = session_ranges
         self.n_sequences = n_sequences
         self.current_session = None
         self.current_session_index = 0
@@ -38,8 +37,8 @@ class CitizenScienceEnv(gym.Env):
         self.n_sequences = n_sequences
 
     def reset(self):
-        session_id = np.random.choice(self.session_ranges)
-        self.current_session = self._get_events(session_id)
+        session_to_run = self.dataset.sample()
+        self.current_session = self._get_events(session_to_run.to_dict('records')[0])
         self.metadata = self._metadata()
         self.current_session_index = 1
         self.reward = 0
@@ -98,8 +97,12 @@ class CitizenScienceEnv(gym.Env):
         return continue_session
         
 
-    def _get_events(self, session_id):
-        subset = self.dataset[self.dataset['session_30_raw'] == session_id]
+    def _get_events(self, session):
+        subset = self.dataset[
+            (self.dataset['session_30_raw'] == session['session_30_raw']) & 
+            (self.dataset['user_id'] == session['user_id'])
+        ]
+        
         subset_user = subset['user_id'].sample(1).values[0]
         subset = subset[subset['user_id'] == subset_user]
         return subset.sort_values('cum_session_event_raw').reset_index(drop=True)

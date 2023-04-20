@@ -1,4 +1,4 @@
 deploy code to gpu and ensure works at scale
-add additional logging and metrics
+    30 files
 incorporate custom policy into the training loop
-begin scaling out experiment
+begin scaling out experiments

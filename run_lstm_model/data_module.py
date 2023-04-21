@@ -12,7 +12,7 @@ TOTAL_EVENTS_INDEX = 2
 BATCHES = 1000000
 
 class ClickstreamDataModule(LightningDataModule):
-    def __init__(self, pointer_list, batch_size, n_sequences, n_features) -> None:
+    def __init__(self, pointer_list, batch_size) -> None:
         super().__init__()
         self.batch_size = batch_size
         train_index = int(pointer_list[0].shape[0] * 0.7)
@@ -24,26 +24,24 @@ class ClickstreamDataModule(LightningDataModule):
         self.n_features = n_features
 
     def train_dataloader(self):
-        dataset = ClickstreamDataset(self.training_data, self.n_sequences, self.n_features)
+        dataset = ClickstreamDataset(self.training_data)
         return DataLoader(dataset, batch_size=self.batch_size, shuffle=False, num_workers=8, pin_memory=False)
 
     def val_dataloader(self):
-        dataset = ClickstreamDataset(self.validation_data, self.n_sequences, self.n_features)
+        dataset = ClickstreamDataset(self.validation_data)
         return DataLoader(dataset, batch_size=self.batch_size, shuffle=False, num_workers=8, pin_memory=False)
     
     def test_dataloader(self):
-        dataset = ClickstreamDataset(self.test_data, self.n_sequences, self.n_features)
+        dataset = ClickstreamDataset(self.test_data)
         return DataLoader(dataset, batch_size=self.batch_size, shuffle=False, num_workers=8, pin_memory=False)
     
 class ClickstreamDataset(Dataset):
-    def __init__(self, dataset_pointer_list, n_sequences, n_features) -> None:
+    def __init__(self, dataset_pointer_list) -> None:
         super().__init__()
         """
         Yield data in batches of BATCHES
         """
         self.pointer_list = dataset_pointer_list
-        self.n_sequences = n_sequences
-        self.n_features = n_features
         self.total_events = self.pointer_list[0].shape[0]
 
 

@@ -8,7 +8,7 @@ import torch
 import logging 
 
 class NPZExtractor:
-    logger = logging.getLogger(__name__)
+    logger = logging.getLogger('likelihood_engagement')
     def __init__(self, input_path, n_files, n_sequences, s3_client, data_partition) -> None:
         self.input_path = input_path
         self.n_files = n_files

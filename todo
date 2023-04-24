@@ -1,10 +1,2 @@
-define experiments 
-incorporate custom policy into the training loop
-incorporate likelihood of not returning to the training loop
-create evaluation and test environment notebooks:
-https://stable-baselines3.readthedocs.io/en/master/common/evaluation.html#stable_baselines3.common.evaluation.evaluate_policy
-
-plan next steps around experiments
-
- s3://dissertation-data-dmiller/reinforcement_learning_incentives/n_files_30/results/2023-04-20-09-15/training_metrics
- s3://dissertation-data-dmiller/reinforcement_learning_incentives/n_files_30/results/2023-04-20-09-15/checkpoints
+scale up to 10 files
+scale up to all files

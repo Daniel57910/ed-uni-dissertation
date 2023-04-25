@@ -161,13 +161,7 @@ def main(args):
     unique_sessions = df[['session_30_raw']].drop_duplicates()
     logger.info(f'Parralelizing environment with {n_envs} environments')
     
-    citizen_science_test = CitizenScienceEnv(df, unique_episodes, unique_sessions, n_sequences)
-    check_env(citizen_science_test, warn=True)
-    return
-    
-
-
-    citizen_science_vec = DummyVecEnv([lambda: CitizenScienceEnv(df, unique_episodes, n_sequences) for _ in range(n_envs)])
+    citizen_science_vec = DummyVecEnv([lambda: CitizenScienceEnv(df, unique_episodes, unique_sessions, n_sequences) for _ in range(n_envs)])
 
     logger.info(f'Vectorized environments created, wrapping with monitor')
 
@@ -187,6 +181,7 @@ def main(args):
     callback_max_episodes = StopTrainingOnMaxEpisodes(max_episodes=n_episodes, verbose=1)
     checkpoint_callback = CheckpointCallback(save_freq=1000 // n_envs, save_path=checkpoint_dir, name_prefix='rl_model')
     dist_callback = DistributionCallback()
+    DistributionCallback.tensorboard_dir(tensorboard_dir)
     callback_list = CallbackList([callback_max_episodes, dist_callback, checkpoint_callback])
     monitor_train = VecMonitor(citizen_science_vec)
     
@@ -199,14 +194,14 @@ def main(args):
         'n_sequences: {}'.format(n_sequences),
         'n_envs: {}'.format(n_envs),
         'total_timesteps: {}'.format(df.shape),
-        f'unique_episodes: {unique_episodes}',
+        f'unique_episodes: {unique_episodes.shape[0]}',
         'device: {}'.format(device),
         'tensorboard_dir: {}'.format(tensorboard_dir),
         'checkpoint_dir: {}'.format(checkpoint_dir)
     ]))
 
 
-    model.learn(total_timesteps=10_000, progress_bar=True, log_interval=1000, callback=callback_list)
+    model.learn(total_timesteps=100_000, progress_bar=True, log_interval=10, callback=callback_list)
 
 if __name__ == "__main__":
     args = parse_args()

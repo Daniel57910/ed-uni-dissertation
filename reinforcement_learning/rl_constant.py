@@ -48,6 +48,16 @@ PREDICTION_COLS = [
     'prediction',
 ]
 
+METADATA_STAT_COLUMNS = [
+    'session_size',
+    'sim_size',
+    'session_minutes',
+    'ended',
+    'incentive_index',
+    'reward',
+    'n_episodes',
+]
+
 
 
 TORCH_LOAD_COLS = LABEL + METADATA + DATE_TIME + OUT_FEATURE_COLUMNS + ['prediction']

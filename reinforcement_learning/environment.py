@@ -1,15 +1,7 @@
 import numpy as np
 from scipy.stats import norm 
-from rl_constant import METADATA, OUT_FEATURE_COLUMNS, PREDICTION_COLS
+from rl_constant import OUT_FEATURE_COLUMNS, METADATA_STAT_COLUMNS 
 
-METADATA_STAT_COLUMNS = [
-    'session_size',
-    'sim_size',
-    'session_minutes',
-    'ended',
-    'incentive_index',
-    'reward'
-]
 
 import gym
 
@@ -28,6 +20,7 @@ class CitizenScienceEnv(gym.Env):
         super(CitizenScienceEnv, self).__init__()
         self.dataset = dataset
         self.unique_episodes = unique_episodes
+        self.n_episodes = 0
         self.n_sequences = n_sequences
         self.unique_sessions = unique_sessions
         self.current_session = None
@@ -41,6 +34,7 @@ class CitizenScienceEnv(gym.Env):
         self.observation_space = gym.spaces.Box(low=0, high=1, shape=(n_sequences + 1, len(self.out_features)), dtype=np.float32)
 
     def reset(self):
+        self.n_episodes += 1
         session_to_run = self.unique_sessions.sample()['session_30_raw'].values[0]
         user_to_run = self.unique_episodes[self.unique_episodes['session_30_raw'] == session_to_run].sample()['user_id'].values[0]
         self.current_session = self._get_events(user_to_run, session_to_run)
@@ -56,9 +50,9 @@ class CitizenScienceEnv(gym.Env):
             self.metadata['ended'] = self.current_session_index
             self.metadata['reward'] = self.reward
             self.metadata_container.append(self.metadata[METADATA_STAT_COLUMNS].values)
-            return next_state, self.reward, done, meta
-        self.reward += (self.current_session.iloc[self.current_session_index]['reward'] / 60)
-        self.current_session_index += 1        
+        else:
+            self.reward += (self.current_session.iloc[self.current_session_index]['reward'] / 60)
+            self.current_session_index += 1        
         return next_state, self.reward, done, meta
     
     def _metadata(self):
@@ -66,18 +60,17 @@ class CitizenScienceEnv(gym.Env):
         session_metadata['ended'] = 0
         session_metadata['incentive_index'] = 0
         session_metadata['reward'] = 0
+        session_metadata['n_episodes'] = self.n_episodes
         return session_metadata
     
     
     def _calculate_next_state(self):
         
-        if self.current_session_index == self.current_session.shape[0]:
+        if (self.current_session_index == self.current_session.shape[0]) or not (self._continuing_in_session()):
             return None, True, {}
         
-        if self._continuing_in_session():
-            return self._state(), False, {}
+        return self._state(), False, {}
       
-        return None, True, {}
   
     def _continuing_in_session(self):
         sim_counts = self.metadata['sim_size']

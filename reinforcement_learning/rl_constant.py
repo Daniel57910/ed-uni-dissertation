@@ -44,5 +44,10 @@ OUT_FEATURE_COLUMNS = [
     "session_event_count",
 ]
 
+PREDICTION_COLS = [
+    'prediction',
+]
 
-TORCH_LOAD_COLS = LABEL + METADATA + DATE_TIME + OUT_FEATURE_COLUMNS
+
+
+TORCH_LOAD_COLS = LABEL + METADATA + DATE_TIME + OUT_FEATURE_COLUMNS + ['prediction']

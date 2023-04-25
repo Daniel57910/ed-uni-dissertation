@@ -1,2 +1,5 @@
-scale up to 10 files
-scale up to all files
+change back to sessions of variable length
+incorporate predictions into model
+incorporate logging every session end into model
+scale to gpu
+begin more sophisticated architecture 

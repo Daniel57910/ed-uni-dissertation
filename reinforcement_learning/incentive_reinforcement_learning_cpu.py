@@ -6,6 +6,7 @@ np.set_printoptions(precision=4, linewidth=200, suppress=True)
 from stable_baselines3.common.callbacks import CallbackList, StopTrainingOnMaxEpisodes, CheckpointCallback
 from stable_baselines3 import A2C
 from callback import DistributionCallback
+from stable_baselines3.common.env_checker import check_env
 import logging
 USER_INDEX = 1
 SESSION_INDEX = 2
@@ -21,7 +22,7 @@ from pprint import pformat
 import os
 from environment import CitizenScienceEnv
 from callback import DistributionCallback
-from constant import TORCH_LOAD_COLS, OUT_FEATURE_COLUMNS, METADATA, LABEL
+from rl_constant import TORCH_LOAD_COLS, OUT_FEATURE_COLUMNS, METADATA, LABEL
 from sklearn.preprocessing import MinMaxScaler
 
 logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p', level=logging.INFO)
@@ -33,11 +34,12 @@ S3_BASELINE_PATH = 's3://dissertation-data-dmiller'
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--read_path', type=str, default='datasets/calculated_features/files_used')
+    parser.add_argument('--read_path', type=str, default='datasets/rl_ready_data')
     parser.add_argument('--n_files', type=str, default=2)
     parser.add_argument('--n_sequences', type=int, default=10)
     parser.add_argument('--n_episodes', type=int, default=20)
     parser.add_argument('--n_envs', type=int, default=100)
+    parser.add_argument('--lstm', type=str, default='ordinal_10')
     parser.add_argument('--device', type=str, default='cpu')
     
     args = parser.parse_args()
@@ -91,7 +93,7 @@ def generate_metadata(dataset):
     
     session_size = dataset.groupby(['user_id', 'session_30_raw']).size().reset_index(name='session_size')
     session_minutes = dataset.groupby(['user_id', 'session_30_raw'])['cum_session_time_raw'].max().reset_index(name='session_minutes')
-    session_size['sim_size'] = (session_size['session_size'] * .75).astype(int).apply(lambda x: x if x > 1 else 1)
+    session_size['sim_size'] = (session_size['session_size'] * .7).astype(int).apply(lambda x: x if x > 1 else 1)
     dataset = dataset.merge(session_size, on=['user_id', 'session_30_raw'])
     dataset = dataset.merge(session_minutes, on=['user_id', 'session_30_raw'])
     return dataset
@@ -136,20 +138,36 @@ def main(args):
         args.n_envs
     )
     
+    file_ext = '.gzip' if not torch.cuda.is_available() else None
+    
+    read_path = os.path.join(
+        read_path,
+        f'files_used_{n_files}',
+        f'rl_ready_data.parquet{file_ext}'
+    )
+    
     logger.info(f'Reading data from {read_path}_{n_files}.parquet')
-    df = pd.read_parquet(f'{read_path}_{n_files}.parquet', columns=TORCH_LOAD_COLS)
+    df = pd.read_parquet(read_path, columns=TORCH_LOAD_COLS)
     df['date_time'] = pd.to_datetime(df['date_time'])
     df = df.sort_values(by=['date_time'])
     logger.info('Data read: generating metadata')
     df['reward'] = df['delta_last_event']
     df = generate_metadata(df)
     df[OUT_FEATURE_COLUMNS] = MinMaxScaler().fit_transform(df[OUT_FEATURE_COLUMNS])
-    df[OUT_FEATURE_COLUMNS] = df[OUT_FEATURE_COLUMNS].astype(np.float16)
+    if torch.cuda.is_available():
+        df = df.to_pandas()
     # df = df.to_pandas()
-    unique_episodes = df[['user_id', 'session_30_raw']].drop_duplicates().shape[0]
+    unique_episodes = df[['user_id', 'session_30_raw']].drop_duplicates()
+    unique_sessions = df[['session_30_raw']].drop_duplicates()
     logger.info(f'Parralelizing environment with {n_envs} environments')
+    
+    citizen_science_test = CitizenScienceEnv(df, unique_episodes, unique_sessions, n_sequences)
+    check_env(citizen_science_test, warn=True)
+    return
+    
 
-    citizen_science_vec = DummyVecEnv([lambda: CitizenScienceEnv(df, n_sequences) for _ in range(n_envs)])
+
+    citizen_science_vec = DummyVecEnv([lambda: CitizenScienceEnv(df, unique_episodes, n_sequences) for _ in range(n_envs)])
 
     logger.info(f'Vectorized environments created, wrapping with monitor')
 
@@ -188,7 +206,7 @@ def main(args):
     ]))
 
 
-    model.learn(total_timesteps=10_000, progress_bar=True, log_interval=10, callback=callback_list)
+    model.learn(total_timesteps=10_000, progress_bar=True, log_interval=1000, callback=callback_list)
 
 if __name__ == "__main__":
     args = parse_args()

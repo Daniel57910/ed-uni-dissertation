@@ -1,6 +1,5 @@
 
 FEATURE_COLS = [
-    "pred_ordinal_10",
     
     "country_count",
     "timestamp_raw",
@@ -46,5 +45,6 @@ RL_STAT_COLUMNS = [
     'sim_size',
     'session_minutes',
     'sim_minutes',
+    'reward'
 
 ]

@@ -13,7 +13,7 @@ from pprint import pformat
 import os
 from environment import CitizenScienceEnv
 from callback import DistributionCallback
-from rl_constant import FEATURE_COLS, META_COLS
+from rl_constant import FEATURE_COLS, META_COLS, RL_STAT_COLUMNS
 
 if torch.cuda.is_available():
     import cudf as gpu_pd
@@ -24,7 +24,9 @@ else:
 logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p', level=logging.INFO)
 np.set_printoptions(precision=4, linewidth=200, suppress=True)
 torch.set_printoptions(precision=2, linewidth=200, sci_mode=False)
-
+pd.set_option('display.max_columns', 500)
+pd.set_option('display.width', 1000)
+pd.set_option('display.max_rows', 500)
 S3_BASELINE_PATH = 's3://dissertation-data-dmiller'
 USER_INDEX = 1
 SESSION_INDEX = 2
@@ -69,6 +71,9 @@ def generate_metadata(dataset):
     session_size['sim_size'] = (session_size['session_size'] * .7).astype(int).apply(lambda x: x if x > 1 else 1)
     dataset = dataset.merge(session_size, on=['user_id', 'session_30'])
     dataset = dataset.merge(session_minutes, on=['user_id', 'session_30'])
+    dataset['cum_session_time_minutes'] = dataset['cum_session_time_raw'] / 60
+    dataset['cum_platform_time_minutes'] = dataset['cum_platform_time_raw'] / 60
+    dataset['reward'] = dataset['cum_session_time_raw'] / 60
     return dataset
     
 
@@ -91,7 +96,30 @@ def run_reinforcement_learning_incentives(environment, logger, n_episodes=1):
         logger.info(f'Epoch: {epoch} - Reward: {rewards}')
         print(environment.user_sessions.head(10))
 
+
+def calculate_time_diff_seconds(df):
+    session_delta = df.loc[df.groupby(['user_id', 'session_30'])['cum_session_time_raw'].min()]
+    return session_delta
+
+
+def reset_session_times(df):
+    session_starts = df[['user_id', 'session_30', 'cum_session_time_raw']] \
+        .drop_duplicates(subset=['user_id', 'session_30'], keep='first') \
+        .rename(columns={'cum_session_time_raw': 'session_start'})
     
+    session_ends = df[['user_id', 'session_30', 'cum_session_time_raw']] \
+        .drop_duplicates(subset=['user_id', 'session_30'], keep='last') \
+        .rename(columns={'cum_session_time_raw': 'session_end'})
+
+    session_ends['prev_end'] = session_ends.groupby(['user_id'])['session_end'].shift(1).fillna(0)
+    
+    df = df.set_index(['user_id', 'session_30']).join(session_starts.set_index(['user_id', 'session_30']), how='inner').reset_index()
+    df = df.set_index(['user_id', 'session_30']).join(session_ends.set_index(['user_id', 'session_30']), how='inner').reset_index()
+    
+    df['cum_session_time_raw'] = df['cum_session_time_raw'] - df['session_start']
+    df['cum_platform_time_raw']  = df['cum_session_time_raw'] + df['prev_end']
+    return df    
+
 def main(args):
     
     exec_time = datetime.now().strftime("%Y-%m-%d-%H-%M")
@@ -121,17 +149,14 @@ def main(args):
         df = gpu_pd.read_parquet(read_path)
     else:
         df = pd.read_parquet(read_path)
-        
     
-    print(df[META_COLS].head(10))
-    
+    df = df.sort_values(['session_30', 'cum_session_event_raw'])
+    df = reset_session_times(df)
+    # return
+    df = df.sort_values(by=['timestamp_raw'])
+    print(df[['user_id', 'session_30', 'cum_session_event_raw', 'cum_session_time_raw', 'cum_platform_time_raw']].head(100))
 
-        
-    logger.info('Data read: generating metadata')
-    df['reward'] = df['cum_session_time_raw']
     df = generate_metadata(df)
-    
-    logger.info(f'Metadata generated: scaling features')
     df[FEATURE_COLS] = MinMaxScaler().fit_transform(df[FEATURE_COLS])
     logger.info(f'Features Scaled')
 
@@ -142,6 +167,8 @@ def main(args):
         df, unique_episodes, unique_sessions = df.to_pandas(), unique_episodes.to_pandas(), unique_sessions.to_pandas()
         
     citizen_science_vec = DummyVecEnv([lambda: CitizenScienceEnv(df, unique_episodes, unique_sessions, n_sequences) for _ in range(n_envs)])
+   
+
 
     logger.info(f'Vectorized environments created, wrapping with monitor')
 

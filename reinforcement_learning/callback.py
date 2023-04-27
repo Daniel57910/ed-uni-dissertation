@@ -22,7 +22,7 @@ class DistributionCallback(BaseCallback):
 
             values_df = pd.DataFrame(
                 values_to_log, 
-                columns=RL_STAT_COLUMNS + ['ended', 'incentive_index', 'reward', 'n_episodes']
+                columns=RL_STAT_COLUMNS + ['ended', 'incentive_index', 'n_episodes']
             )
             
             dist_session_time = (values_df['session_minutes'] - values_df['reward']).mean()

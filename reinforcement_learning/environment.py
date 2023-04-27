@@ -34,7 +34,7 @@ class CitizenScienceEnv(gym.Env):
         self.reward = 0
         self.metadata_container = []
         self.n_sequences = n_sequences
-        self.out_features = FEATURE_COLS
+        self.out_features = FEATURE_COLS + ['pred_ordinal_10']
         
         self.action_space = gym.spaces.Discrete(2)
         self.observation_space = gym.spaces.Box(low=0, high=1, shape=(n_sequences + 1, len(self.out_features)), dtype=np.float32)
@@ -58,7 +58,7 @@ class CitizenScienceEnv(gym.Env):
             self.metadata_container.append(self.metadata.values)
             return next_state, self.reward, done, meta
         else:
-            self.reward = self.current_session.iloc[self.current_session_index]['reward'] / 60
+            self.reward = self.current_session.iloc[self.current_session_index]['reward'] 
             self.current_session_index += 1        
         return next_state, self.reward, done, meta
     
@@ -66,7 +66,6 @@ class CitizenScienceEnv(gym.Env):
         session_metadata = self.current_session.iloc[0][RL_STAT_COLUMNS]
         session_metadata['ended'] = 0
         session_metadata['incentive_index'] = 0
-        session_metadata['reward'] = 0
         session_metadata['n_episodes'] = self.n_episodes
         return session_metadata
     

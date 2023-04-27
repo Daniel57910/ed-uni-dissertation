@@ -45,5 +45,6 @@ RL_STAT_COLUMNS = [
     'session_size',
     'sim_size',
     'session_minutes',
+    'sim_minutes',
 
 ]

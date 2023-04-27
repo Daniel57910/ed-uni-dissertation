@@ -1,4 +1,4 @@
-from rl_constant import OUT_FEATURE_COLUMNS, METADATA_STAT_COLUMNS
+from rl_constant import RL_STAT_COLUMNS
 from stable_baselines3.common.callbacks import  BaseCallback
 from stable_baselines3.common.logger import TensorBoardOutputFormat
 import numpy as np
@@ -6,7 +6,6 @@ import pandas as pd
 
 class DistributionCallback(BaseCallback):
     
-    metadata_stat = METADATA_STAT_COLUMNS + ['time_in_session']
     @classmethod
     def tensorboard_setup(cls, log_dir, log_freq):
         cls._log_dir = log_dir
@@ -23,24 +22,34 @@ class DistributionCallback(BaseCallback):
 
             values_df = pd.DataFrame(
                 values_to_log, 
-                columns=METADATA_STAT_COLUMNS
+                columns=RL_STAT_COLUMNS + ['ended', 'incentive_index', 'reward', 'n_episodes']
             )
             
-            dist_session_time = (values_df['session_minutes'] - values_df['time_in_session']).mean()
+            dist_session_time = (values_df['session_minutes'] - values_df['reward']).mean()
             dist_session_end = (values_df['session_size'] - values_df['ended']).mean()
+            
+            dist_sim_time = (values_df['reward'] - values_df['sim_size']).mean()
+            dist_sim_end = (values_df['ended'] - values_df['sim_size']).mean()
+
+
             dist_inc_session = (values_df['session_size'] - values_df['incentive_index']).mean()
-            dist_session_end = (values_df['ended'] - values_df['incentive_index']).mean()
-            dist_inc_sim_size = (values_df['ended'] - values_df['sim_size']).mean()
-            dist_inc_sim_index = (values_df['incentive_index'] - values_df['sim_size']).mean()
+            dist_inc_end = (values_df['ended'] - values_df['incentive_index']).mean()
+            dist_inc_sim_index = (values_df['sim_size'] - values_df['incentive_index']).mean()
 
             n_call = self.n_calls // self._log_freq
             
-            self.tb_formatter.writer.add_scalar('event/sess_time_sub_sime_time::decrease', dist_session_time, n_call)
-            self.tb_formatter.writer.add_scalar('event/sess_index_sub_sim_index::decrease', dist_session_end, n_call)
-            self.tb_formatter.writer.add_scalar('event/sim_incentive_index_sub_index_no_reward::increase', dist_inc_sim_size, n_call)
+            self.tb_formatter.writer.add_scalar('distance/session/max_reward::decrease', dist_session_time, n_call)
+            self.tb_formatter.writer.add_scalar('distance/session/max_ended::decrease', dist_session_end, n_call)
+           
+            self.tb_formatter.writer.add_scalar('distance/session/sim_reward::increase', dist_sim_time, n_call)
+            self.tb_formatter.writer.add_scalar('distance/session/sim_ended::increase', dist_sim_end, n_call)
             
-            self.tb_formatter.writer.add_scalar('event/sess_index_sub_incentive_index', dist_inc_session, n_call)
-            self.tb_formatter.writer.add_scalar('event/sim_index_sub_incentive_index', dist_inc_sim_index, n_call)
+            
+            self.tb_formatter.writer.add_scalar('distance/incentive/max_incentive::decrease', dist_inc_session, n_call)
+            self.tb_formatter.writer.add_scalar('distance/incentive/ended_incentive', dist_inc_end, n_call)
+            self.tb_formatter.writer.add_scalar('distance/incentive/sim_inc_placement::decrease', dist_inc_sim_index, n_call)
+            self.tb_formatter.writer.add_scalar('distance/ended_sim_size::increase', dist_inc_sim_index, n_call)
+            
             self.tb_formatter.writer.flush()
             
             values_df.to_parquet(f'{self._log_dir}/dist_{n_call}.parquet')

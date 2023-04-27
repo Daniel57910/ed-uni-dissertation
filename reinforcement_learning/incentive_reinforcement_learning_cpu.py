@@ -12,7 +12,7 @@ from stable_baselines3.common.vec_env import VecMonitor
 from pprint import pformat
 import os
 from environment import CitizenScienceEnv
-# from callback import DistributionCallback
+from callback import DistributionCallback
 from rl_constant import FEATURE_COLS, META_COLS
 
 if torch.cuda.is_available():
@@ -65,6 +65,7 @@ def generate_metadata(dataset):
     session_size = dataset.groupby(['user_id', 'session_30']).size().reset_index(name='session_size')
     session_minutes = dataset.groupby(['user_id', 'session_30'])['cum_session_time_raw'].max().reset_index(name='session_minutes')
     session_minutes['session_minutes'] = session_minutes['session_minutes'] / 60
+    session_minutes['sim_minutes'] = session_minutes['session_minutes'] * .7
     session_size['sim_size'] = (session_size['session_size'] * .7).astype(int).apply(lambda x: x if x > 1 else 1)
     dataset = dataset.merge(session_size, on=['user_id', 'session_30'])
     dataset = dataset.merge(session_minutes, on=['user_id', 'session_30'])
@@ -140,25 +141,6 @@ def main(args):
     if torch.cuda.is_available():
         df, unique_episodes, unique_sessions = df.to_pandas(), unique_episodes.to_pandas(), unique_sessions.to_pandas()
         
-
-    citizen_science_vec = CitizenScienceEnv(df, unique_episodes, unique_sessions, n_sequences)
-   
-    check_env(citizen_science_vec, warn=True)
-    return 
-    for _ in range(1):
-        done = False
-        state = citizen_science_vec.reset()
-        while not done:
-            state, reward, done, meta = citizen_science_vec.step(1)
-            if not done:
-                print(f'not done: {done}: reward: {reward}')
-            if not type(state) == np.ndarray:
-                print(f'done: {done}: reward: {reward}')
-  
-                
-
-    print(citizen_science_vec.metadata_container)
-    return
     citizen_science_vec = DummyVecEnv([lambda: CitizenScienceEnv(df, unique_episodes, unique_sessions, n_sequences) for _ in range(n_envs)])
 
     logger.info(f'Vectorized environments created, wrapping with monitor')

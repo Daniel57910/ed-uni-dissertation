@@ -1,17 +1,18 @@
+from rl_constant import OUT_FEATURE_COLUMNS, METADATA_STAT_COLUMNS
 from stable_baselines3.common.callbacks import  BaseCallback
 from stable_baselines3.common.logger import TensorBoardOutputFormat
 import numpy as np
 import pandas as pd
-from rl_constant import METADATA_STAT_COLUMNS
+
 class DistributionCallback(BaseCallback):
     
+    metadata_stat = METADATA_STAT_COLUMNS + ['time_in_session']
     @classmethod
-    def tensorboard_dir(cls, log_dir):
-        cls.log_dir = log_dir
-    
+    def tensorboard_setup(cls, log_dir, log_freq):
+        cls._log_dir = log_dir
+        cls._log_freq = log_freq
 
     def _on_training_start(self) -> None:
-        self._log_freq = 10
         output_formats = self.logger.output_formats
         self.tb_formatter = next(f for f in output_formats if isinstance(f, TensorBoardOutputFormat))
     
@@ -25,7 +26,7 @@ class DistributionCallback(BaseCallback):
                 columns=METADATA_STAT_COLUMNS
             )
             
-            dist_session_time = (values_df['session_minutes'] - values_df['reward']).mean()
+            dist_session_time = (values_df['session_minutes'] - values_df['time_in_session']).mean()
             dist_session_end = (values_df['session_size'] - values_df['ended']).mean()
             dist_inc_session = (values_df['session_size'] - values_df['incentive_index']).mean()
             dist_session_end = (values_df['ended'] - values_df['incentive_index']).mean()
@@ -42,6 +43,6 @@ class DistributionCallback(BaseCallback):
             self.tb_formatter.writer.add_scalar('event/sim_index_sub_incentive_index', dist_inc_sim_index, n_call)
             self.tb_formatter.writer.flush()
             
-            values_df.to_parquet(f'{self.log_dir}/dist_{n_call}.parquet')
+            values_df.to_parquet(f'{self._log_dir}/dist_{n_call}.parquet')
             
         return True

@@ -1,6 +1,12 @@
 import numpy as np
 from scipy.stats import norm 
-from rl_constant import OUT_FEATURE_COLUMNS, METADATA_STAT_COLUMNS 
+from rl_constant import FEATURE_COLS, META_COLS, RL_STAT_COLUMNS
+
+
+import gym
+
+import numpy as np
+from scipy.stats import norm 
 
 
 import gym
@@ -28,18 +34,18 @@ class CitizenScienceEnv(gym.Env):
         self.reward = 0
         self.metadata_container = []
         self.n_sequences = n_sequences
-        self.out_features = OUT_FEATURE_COLUMNS + ['prediction']
+        self.out_features = FEATURE_COLS
         
         self.action_space = gym.spaces.Discrete(2)
         self.observation_space = gym.spaces.Box(low=0, high=1, shape=(n_sequences + 1, len(self.out_features)), dtype=np.float32)
 
     def reset(self):
         self.n_episodes += 1
-        session_to_run = self.unique_sessions.sample()['session_30_raw'].values[0]
-        user_to_run = self.unique_episodes[self.unique_episodes['session_30_raw'] == session_to_run].sample()['user_id'].values[0]
+        session_to_run = self.unique_sessions.sample(1)['session_30'].values[0]
+        user_to_run = self.unique_episodes[self.unique_episodes['session_30'] == session_to_run].sample(1)['user_id'].values[0]
         self.current_session = self._get_events(user_to_run, session_to_run)
         self.metadata = self._metadata()
-        self.current_session_index = 1
+        self.current_session_index = 0
         self.reward = 0
         return self._state()
 
@@ -47,16 +53,17 @@ class CitizenScienceEnv(gym.Env):
         self._take_action(action)
         next_state, done, meta = self._calculate_next_state()
         if done:
-            self.metadata['ended'] = self.current_session_index
+            self.metadata['ended'] = self.current_session_index + 1
             self.metadata['reward'] = self.reward
-            self.metadata_container.append(self.metadata[METADATA_STAT_COLUMNS].values)
+            self.metadata_container.append(self.metadata.values)
+            return next_state, self.reward, done, meta
         else:
-            self.reward += (self.current_session.iloc[self.current_session_index]['reward'] / 60)
+            self.reward = self.current_session.iloc[self.current_session_index]['reward'] / 60
             self.current_session_index += 1        
         return next_state, self.reward, done, meta
     
     def _metadata(self):
-        session_metadata = self.current_session.iloc[0][['user_id', 'session_30_raw', 'session_size', 'sim_size', 'session_minutes']]
+        session_metadata = self.current_session.iloc[0][RL_STAT_COLUMNS]
         session_metadata['ended'] = 0
         session_metadata['incentive_index'] = 0
         session_metadata['reward'] = 0
@@ -66,10 +73,14 @@ class CitizenScienceEnv(gym.Env):
     
     def _calculate_next_state(self):
         
-        if (self.current_session_index == self.current_session.shape[0]) or not (self._continuing_in_session()):
+        if (self.current_session_index == self.current_session.shape[0]):
             return None, True, {}
+
+        if self._continuing_in_session():
+            return self._state(), False, {}
+    
+        return None, True, {}
         
-        return self._state(), False, {}
       
   
     def _continuing_in_session(self):
@@ -79,7 +90,7 @@ class CitizenScienceEnv(gym.Env):
         
         extending_session = self._probability_extending_session()
         
-        return all([extending_session >= .3, extending_session <= .8])
+        return all([extending_session >= .3, extending_session <= .7])
         
     
     def _probability_extending_session(self):
@@ -98,7 +109,7 @@ class CitizenScienceEnv(gym.Env):
     def _get_events(self, user_id, session):
         subset = self.dataset[
             (self.dataset['user_id'] == user_id) &
-            (self.dataset['session_30_raw'] == session)
+            (self.dataset['session_30'] == session)
         ]
    
         return subset.sort_values('cum_session_event_raw').reset_index(drop=True)
@@ -115,7 +126,7 @@ class CitizenScienceEnv(gym.Env):
             events = self.current_session.iloc[self.current_session_index - (self.n_sequences + 1):self.current_session_index][self.out_features].values
             
         else:
-            delta = (self.n_sequences + 1)- self.current_session_index
+            delta = min((self.n_sequences + 1)- self.current_session_index, 10)
             zero_cat = np.zeros((delta, len(self.out_features)))
             events = self.current_session.iloc[:max(self.current_session_index, 1)][self.out_features].values
             events = np.concatenate((zero_cat, events), axis=0)

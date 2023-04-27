@@ -1,24 +1,7 @@
-LABEL = [
-    "session_terminates_30_minutes"
-]
 
-METADATA = [
-    "user_id",
-    "session_30_raw",
+FEATURE_COLS = [
+    "pred_ordinal_10",
     
-    "cum_session_event_raw",
-    "cum_session_time_raw",
-    
-    "cum_platform_event_raw",
-    "global_events_user",
-    "global_session_time_minutes",
-]
-
-DATE_TIME = [
-    "date_time",
-]
-
-OUT_FEATURE_COLUMNS = [
     "country_count",
     "timestamp_raw",
     "date_hour_sin",
@@ -44,20 +27,23 @@ OUT_FEATURE_COLUMNS = [
     "session_event_count",
 ]
 
-PREDICTION_COLS = [
-    'prediction',
+
+META_COLS = [
+    "user_id",
+    "label",
+    "session_30",
+    "cum_session_event_raw",
+    "cum_session_time_raw",
+    "glob_platform_event",
+    "glob_platform_time",
+    
 ]
 
-METADATA_STAT_COLUMNS = [
+RL_STAT_COLUMNS = [
+    'user_id',
+    'session_30',
     'session_size',
     'sim_size',
     'session_minutes',
-    'ended',
-    'incentive_index',
-    'reward',
-    'n_episodes',
+
 ]
-
-
-
-TORCH_LOAD_COLS = LABEL + METADATA + DATE_TIME + OUT_FEATURE_COLUMNS + ['prediction']

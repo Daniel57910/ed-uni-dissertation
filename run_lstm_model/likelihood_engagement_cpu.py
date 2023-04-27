@@ -13,29 +13,21 @@ from torch import nn
 import io
 import tqdm
 import numpy as np
-from constant import TORCH_LOAD_COLS, LABEL, METADATA, DATE_TIME
+import pandas as pd
+from rl_constant import LABEL, METADATA, DATE_COLS, OUT_FEATURE_COLUMNS, PREDICTION_COLS
 
-CHECK_COLS = LABEL + METADATA + DATE_TIME + ['prediction']
+if torch.cuda.is_available():
+    import cudf as gpu_pd
+    import pandas as pd
+    import cupy as cp
 
+
+pd.set_option('display.width', 1000)
+pd.set_option('display.max_columns', 500)
+pd.set_option('display.max_rows', 500)    
 torch.set_printoptions(sci_mode=False, linewidth=400, precision=2)
 np.set_printoptions(suppress=True, precision=4, linewidth=200)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
-
-if torch.cuda.is_available():
-    import cudf as pd
-    import pandas as cpu_pd
-    cpu_pd.set_option('display.max_columns', 500)
-    cpu_pd.set_option('display.width', 1000)
-    
-    import cupy as np
-else:
-    import pandas as pd
-    pd.set_option('display.max_columns', 500)
-    pd.set_option('display.width', 1000)
-    pd.set_option('display.precision', 4)
-    import numpy as np
-    
-    
 
 CHECKPOINT_DIR='s3://dissertation-data-dmiller/lstm_experiments/checkpoints/data_v1/n_files_30/ordinal/sequence_length_10/data_partition_None/2023_03_30_07_54'
 METADATA_INDEX = 13
@@ -48,7 +40,7 @@ def parse_args():
     parser.add_argument('--n_sequences', type=int, default=10)
     parser.add_argument('--file_path', type=str, default='datasets/torch_ready_data')
     parser.add_argument('--checkpoint_dir', type=str, default=CHECKPOINT_DIR)
-    parser.add_argument('--write_path', type=str, default='datasets/lstm_predictions')
+    parser.add_argument('--write_path', type=str, default='datasets/rl_ready_data')
     parser.add_argument('--model_type', type=str, default='ordinal')
     args = parser.parse_args()
     return args
@@ -63,6 +55,12 @@ def _extract_features(tensor, n_sequences, n_features):
     )
         
     return metadata, features
+
+def _extract_last_sequence(tensor):
+    """_summary_
+    Extracts the last sequence from a tensor of sequences.
+    """
+    return tensor[:, -1, :]
 
 @torch.no_grad()
 def generate_static_predictions():
@@ -85,7 +83,7 @@ def generate_static_predictions():
     
     logger.info('Downloading model checkpoint')
     
-    write_path = os.path.join(args.write_path, f'files_used_{args.n_files}/{args.model_type}_seq_{args.n_sequences}')
+    write_path = os.path.join(args.write_path, f'files_used_{args.n_files}')
     if not os.path.exists(write_path):
         logger.info(f'Creating directory: {write_path}')
         os.makedirs(write_path)
@@ -109,7 +107,7 @@ def generate_static_predictions():
     logger.info(f'Model loaded. Creating dataset: n_events {dataset[0].shape[0]}')
     
     dataset = ClickstreamDataset(dataset)
-    loader = DataLoader(dataset, batch_size=512, shuffle=False)
+    loader = DataLoader(dataset, batch_size=2047, shuffle=False)
     
 
     p_bar = tqdm.tqdm(loader, total=len(loader))
@@ -117,85 +115,27 @@ def generate_static_predictions():
     for indx, data in enumerate(p_bar):
         p_bar.set_description(f'Processing batch: {indx}')
         metadata, features = _extract_features(data, args.n_sequences + 1, 18)
-        user_metadata = metadata[:, :4]
+        last_sequence = _extract_last_sequence(features)
         preds = model(features)
         preds = nn.Sigmoid()(preds)
-        user_metadata = torch.cat([user_metadata, preds], dim=1)
-        user_metadata_container.append(user_metadata.cpu().numpy())
+        user_metadata = torch.cat([metadata, preds, last_sequence], dim=1)
+        user_metadata_container.append(user_metadata)
 
-   
-    user_metadata = np.concatenate(user_metadata_container, axis=0)
-    user_metadata = pd.DataFrame(user_metadata, columns=['user_label', 'user_id', 'session_id', 'event_id', 'prediction'])
-    
-    
-   
-    logger.info(f'Writing predictions to {write_path}/predictions.parquet')
- 
-    user_metadata.to_parquet(f'{write_path}/predictions.parquet')
-
-
-def join_pred_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--n_files', type=int, default=2)
-    parser.add_argument('--n_sequences', type=int, default=10)
-    parser.add_argument('--model_type', type=str, default='ordinal')
-    parser.add_argument('--rl_data', type=str, default='datasets/rl_ready_data')
-    
-    args = parser.parse_args()
-    return args
-
-def join_predictions_on_original():
-    args = join_pred_args()
-    predictions_path = f'lstm_predictions/files_used_{args.n_files}/{args.model_type}_seq_{args.n_sequences}/predictions.parquet'
-    dataset_path = f'calculated_features/files_used_{args.n_files}.parquet'
-    if not torch.cuda.is_available():
-        predictions_path, dataset_path = (
-            os.path.join('datasets', predictions_path),
-            os.path.join('datasets', dataset_path)
-        )
-    logger.info(f'Loading predictions from {predictions_path}')
-    logger.info(f'Loading dataset from {dataset_path}')
-    
-    predictions, original = (
-        pd.read_parquet(predictions_path),
-        pd.read_parquet(dataset_path, columns=TORCH_LOAD_COLS)
-    )
-    
-    predictions = predictions.rename(columns={
-        'session_id': 'session_30_raw',
-        'event_id': 'cum_session_event_raw'
+    predicted_data = torch.tensor(user_metadata).cpu().numpy()
+    predicted_data = pd.DataFrame(user_metadata, columns=LABEL + METADATA + DATE_COLS + OUT_FEATURE_COLUMNS + PREDICTION_COLS)
+    predicted_data = predicted_data.rename(columns={
+        'prediction': f'pred_{args.model_type}_seq_{args.n_sequences}'
     })
     
-    logger.info(f'Shape of predictions: {predictions.shape}')
-    logger.info(f'Shape of original: {original.shape}')
+    predicted_data = predicted_data.drop(columns=DATE_COLS)
+    output_path = os.path.join(write_path, f'{args.model_type}_seq_{args.n_sequences}.parquet')
+    logger.info(f'Writing rl ready data: {output_path}')
     
+    logger.info(f'Percentage data correct: {predicted_data.count().min() / predicted_data.shape[0]}')
+    predicted_data.to_parquet(output_path, index=False)
     
-    logger.info(f'Joining predictions on original dataset')
 
-    predictions = predictions.set_index(['user_id', 'session_30_raw', 'cum_session_event_raw']) \
-        .join(original.set_index(['user_id', 'session_30_raw', 'cum_session_event_raw'])) \
-        .reset_index() \
-        .drop(columns=['user_label'])
-    
-    
-    logger.info(f'Predictions joined: {predictions.shape}: columns')
-    logger.info(pformat(predictions.columns.tolist()))
-    
-    logger.info(predictions[CHECK_COLS].head(10))
-    
-    write_path = os.path.join(
-        args.rl_data,
-        f'files_used_{args.n_files}',
-        f'{args.model_type}_seq_{args.n_sequences}'
-    )
-    
-    if not os.path.exists(write_path):
-        logger.info(f'Creating directory: {write_path}')
-        os.makedirs(write_path)
-    
-    logger.info(f'Writing joined predictions to {write_path}/rl_ready_data.parquet.gzip')
-    predictions.to_parquet(f'{write_path}/rl_ready_data.parquet.gzip', compression='gzip')
    
     
 if __name__ == "__main__":
-    join_predictions_on_original()
+    generate_static_predictions()

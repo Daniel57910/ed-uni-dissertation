@@ -1,5 +1,4 @@
-change back to sessions of variable length
-incorporate predictions into model
-incorporate logging every session end into model
-scale to gpu
-begin more sophisticated architecture 
+investigate and understand cum_session_time_raw
+fix bug
+ - not function of reward 
+resample to 1 event rather than shuffle all 

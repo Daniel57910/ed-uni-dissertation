@@ -1,19 +1,10 @@
 import argparse
 import numpy as np
 import torch
-torch.set_printoptions(precision=4, linewidth=200, sci_mode=False)
-np.set_printoptions(precision=4, linewidth=200, suppress=True)
 from stable_baselines3.common.callbacks import CallbackList, StopTrainingOnMaxEpisodes, CheckpointCallback
 from stable_baselines3 import A2C
-from callback import DistributionCallback
 from stable_baselines3.common.env_checker import check_env
 import logging
-USER_INDEX = 1
-SESSION_INDEX = 2
-CUM_SESSION_EVENT_RAW = 3
-TIMESTAMP_INDEX = 11
-TRAIN_SPLIT = 0.7
-EVAL_SPLIT = 0.15
 import pandas as pd
 from stable_baselines3.common.vec_env import DummyVecEnv
 from datetime import datetime
@@ -21,16 +12,26 @@ from stable_baselines3.common.vec_env import VecMonitor
 from pprint import pformat
 import os
 from environment import CitizenScienceEnv
-from callback import DistributionCallback
-from rl_constant import TORCH_LOAD_COLS, OUT_FEATURE_COLUMNS, METADATA, LABEL
-from sklearn.preprocessing import MinMaxScaler
+# from callback import DistributionCallback
+from rl_constant import FEATURE_COLS, META_COLS
+
+if torch.cuda.is_available():
+    import cudf as gpu_pd
+    from cuml.preprocessing import MinMaxScaler as MinMaxScaler
+else:
+    from sklearn.preprocessing import MinMaxScaler
 
 logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p', level=logging.INFO)
 np.set_printoptions(precision=4, linewidth=200, suppress=True)
 torch.set_printoptions(precision=2, linewidth=200, sci_mode=False)
 
-
 S3_BASELINE_PATH = 's3://dissertation-data-dmiller'
+USER_INDEX = 1
+SESSION_INDEX = 2
+CUM_SESSION_EVENT_RAW = 3
+TIMESTAMP_INDEX = 11
+TRAIN_SPLIT = 0.7
+EVAL_SPLIT = 0.15
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -39,42 +40,12 @@ def parse_args():
     parser.add_argument('--n_sequences', type=int, default=10)
     parser.add_argument('--n_episodes', type=int, default=20)
     parser.add_argument('--n_envs', type=int, default=100)
-    parser.add_argument('--lstm', type=str, default='ordinal_10')
+    parser.add_argument('--lstm', type=str, default='ordinal_seq_10')
     parser.add_argument('--device', type=str, default='cpu')
+    
     
     args = parser.parse_args()
     return args
-
-import numpy as np
-import torch
-torch.set_printoptions(precision=4, linewidth=200, sci_mode=False)
-np.set_printoptions(precision=4, linewidth=200, suppress=True)
-from stable_baselines3.common.callbacks import CallbackList, StopTrainingOnMaxEpisodes
-from stable_baselines3 import A2C
-import logging
-USER_INDEX = 1
-SESSION_INDEX = 2
-CUM_SESSION_EVENT_RAW = 3
-TIMESTAMP_INDEX = 11
-TRAIN_SPLIT = 0.7
-EVAL_SPLIT = 0.15
-import pandas as pd
-# import cudf as gpu_pd
-from stable_baselines3.common.vec_env import DummyVecEnv
-from datetime import datetime
-from stable_baselines3.common.vec_env import VecMonitor
-from pprint import pformat
-import os
-# from cuml.preprocessing import MinMaxScalerGPU
-from sklearn.preprocessing import MinMaxScaler
-
-logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p', level=logging.INFO)
-np.set_printoptions(precision=4, linewidth=200, suppress=True)
-torch.set_printoptions(precision=2, linewidth=200, sci_mode=False)
-
-
-S3_BASELINE_PATH = 's3://dissertation-data-dmiller'
-
 
 def train_eval_split(dataset, logger):
     train_split = int(dataset.shape[0] * TRAIN_SPLIT)
@@ -91,11 +62,12 @@ def train_eval_split(dataset, logger):
 
 def generate_metadata(dataset):
     
-    session_size = dataset.groupby(['user_id', 'session_30_raw']).size().reset_index(name='session_size')
-    session_minutes = dataset.groupby(['user_id', 'session_30_raw'])['cum_session_time_raw'].max().reset_index(name='session_minutes')
+    session_size = dataset.groupby(['user_id', 'session_30']).size().reset_index(name='session_size')
+    session_minutes = dataset.groupby(['user_id', 'session_30'])['cum_session_time_raw'].max().reset_index(name='session_minutes')
+    session_minutes['session_minutes'] = session_minutes['session_minutes'] / 60
     session_size['sim_size'] = (session_size['session_size'] * .7).astype(int).apply(lambda x: x if x > 1 else 1)
-    dataset = dataset.merge(session_size, on=['user_id', 'session_30_raw'])
-    dataset = dataset.merge(session_minutes, on=['user_id', 'session_30_raw'])
+    dataset = dataset.merge(session_size, on=['user_id', 'session_30'])
+    dataset = dataset.merge(session_minutes, on=['user_id', 'session_30'])
     return dataset
     
 
@@ -119,7 +91,6 @@ def run_reinforcement_learning_incentives(environment, logger, n_episodes=1):
         print(environment.user_sessions.head(10))
 
     
-
 def main(args):
     
     exec_time = datetime.now().strftime("%Y-%m-%d-%H-%M")
@@ -138,29 +109,56 @@ def main(args):
         args.n_envs
     )
     
-    file_ext = '.gzip' if not torch.cuda.is_available() else None
-    
     read_path = os.path.join(
         read_path,
         f'files_used_{n_files}',
-        f'rl_ready_data.parquet{file_ext}'
+        f'{args.lstm}.parquet'
     )
     
     logger.info(f'Reading data from {read_path}_{n_files}.parquet')
-    df = pd.read_parquet(read_path, columns=TORCH_LOAD_COLS)
-    df['date_time'] = pd.to_datetime(df['date_time'])
-    df = df.sort_values(by=['date_time'])
-    logger.info('Data read: generating metadata')
-    df['reward'] = df['delta_last_event']
-    df = generate_metadata(df)
-    df[OUT_FEATURE_COLUMNS] = MinMaxScaler().fit_transform(df[OUT_FEATURE_COLUMNS])
     if torch.cuda.is_available():
-        df = df.to_pandas()
-    # df = df.to_pandas()
-    unique_episodes = df[['user_id', 'session_30_raw']].drop_duplicates()
-    unique_sessions = df[['session_30_raw']].drop_duplicates()
-    logger.info(f'Parralelizing environment with {n_envs} environments')
+        df = gpu_pd.read_parquet(read_path)
+    else:
+        df = pd.read_parquet(read_path)
+        
     
+    print(df[META_COLS].head(10))
+    
+
+        
+    logger.info('Data read: generating metadata')
+    df['reward'] = df['cum_session_time_raw']
+    df = generate_metadata(df)
+    
+    logger.info(f'Metadata generated: scaling features')
+    df[FEATURE_COLS] = MinMaxScaler().fit_transform(df[FEATURE_COLS])
+    logger.info(f'Features Scaled')
+
+    unique_episodes = df[['user_id', 'session_30']].drop_duplicates()
+    unique_sessions = df[['session_30']].drop_duplicates()
+    logger.info(f'Parralelizing environment with {n_envs} environments')
+    if torch.cuda.is_available():
+        df, unique_episodes, unique_sessions = df.to_pandas(), unique_episodes.to_pandas(), unique_sessions.to_pandas()
+        
+
+    citizen_science_vec = CitizenScienceEnv(df, unique_episodes, unique_sessions, n_sequences)
+   
+    check_env(citizen_science_vec, warn=True)
+    return 
+    for _ in range(1):
+        done = False
+        state = citizen_science_vec.reset()
+        while not done:
+            state, reward, done, meta = citizen_science_vec.step(1)
+            if not done:
+                print(f'not done: {done}: reward: {reward}')
+            if not type(state) == np.ndarray:
+                print(f'done: {done}: reward: {reward}')
+  
+                
+
+    print(citizen_science_vec.metadata_container)
+    return
     citizen_science_vec = DummyVecEnv([lambda: CitizenScienceEnv(df, unique_episodes, unique_sessions, n_sequences) for _ in range(n_envs)])
 
     logger.info(f'Vectorized environments created, wrapping with monitor')
@@ -181,7 +179,7 @@ def main(args):
     callback_max_episodes = StopTrainingOnMaxEpisodes(max_episodes=n_episodes, verbose=1)
     checkpoint_callback = CheckpointCallback(save_freq=1000 // n_envs, save_path=checkpoint_dir, name_prefix='rl_model')
     dist_callback = DistributionCallback()
-    DistributionCallback.tensorboard_dir(tensorboard_dir)
+    DistributionCallback.tensorboard_setup(tensorboard_dir, 100)
     callback_list = CallbackList([callback_max_episodes, dist_callback, checkpoint_callback])
     monitor_train = VecMonitor(citizen_science_vec)
     
@@ -202,6 +200,7 @@ def main(args):
 
 
     model.learn(total_timesteps=100_000, progress_bar=True, log_interval=10, callback=callback_list)
+    
 
 if __name__ == "__main__":
     args = parse_args()

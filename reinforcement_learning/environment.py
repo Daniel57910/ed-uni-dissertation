@@ -126,7 +126,7 @@ class CitizenScienceEnv(gym.Env):
             events = np.concatenate((zero_cat, events), axis=0)
             
 
-        return events.astype(np.float32)
+        return events.astype(np.float32).T
   
     
     def dists(self):

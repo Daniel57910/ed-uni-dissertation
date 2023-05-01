@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from stable_baselines3.common.callbacks import CallbackList, StopTrainingOnMaxEpisodes, CheckpointCallback
 from stable_baselines3 import A2C, DQN, PPO
-from policies.cnn_policy import CustomConv1dPolicy
+from policies.cnn_policy import CustomConv1dPolicy, TestConv1
 from stable_baselines3.common.env_checker import check_env
 import logging
 import pandas as pd
@@ -200,11 +200,21 @@ def main(args):
     
     policy_kwargs = dict(
         features_extractor_class=CustomConv1dPolicy,
-        features_extractor_kwargs=dict(features_dim=2)
+        features_extractor_kwargs=dict(features_dim=64)
     )
-   
-    custom_dqn = PPO(policy="CnnPolicy", env=env, policy_kwargs=policy_kwargs, verbose=1, tensorboard_log=tb_log, device=device)
-        
+    
+    policy = CustomConv1dPolicy(env.observation_space, 11, 21, 64)
+    
+    step = env.reset()
+    step = torch.from_numpy(step).float()
+    step = policy(step)
+    print(step.shape)
+    return
+    
+    custom_dqn = PPO(policy="CnnPolicy", env=env, policy_kwargs=policy_kwargs, verbose=1)
+    print(custom_dqn.policy)
+    
+    # custom_dqn.learn(total_timesteps=100_000, progress_bar=True) 
     return
     citizen_science_vec = DummyVecEnv([lambda: CitizenScienceEnv(df, unique_episodes, unique_sessions, out_features, n_sequences) for _ in range(n_envs)])
    

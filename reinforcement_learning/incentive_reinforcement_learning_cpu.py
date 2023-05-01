@@ -2,7 +2,8 @@ import argparse
 import numpy as np
 import torch
 from stable_baselines3.common.callbacks import CallbackList, StopTrainingOnMaxEpisodes, CheckpointCallback
-from stable_baselines3 import A2C, DQN
+from stable_baselines3 import A2C, DQN, PPO
+from policies.cnn_policy import CustomConv1dPolicy
 from stable_baselines3.common.env_checker import check_env
 import logging
 import pandas as pd
@@ -195,7 +196,16 @@ def main(args):
     unique_sessions = df[['session_30_raw']].drop_duplicates()
     df = df.drop(columns=['year', 'month', 'day', 'hour', 'minute', 'second', 'second_window'])
     
-
+    env = CitizenScienceEnv(df, unique_episodes, unique_sessions, out_features, n_sequences)
+    
+    policy_kwargs = dict(
+        features_extractor_class=CustomConv1dPolicy,
+        features_extractor_kwargs=dict(features_dim=2)
+    )
+   
+    custom_dqn = PPO(policy="CnnPolicy", env=env, policy_kwargs=policy_kwargs, verbose=1, tensorboard_log=tb_log, device=device)
+        
+    return
     citizen_science_vec = DummyVecEnv([lambda: CitizenScienceEnv(df, unique_episodes, unique_sessions, out_features, n_sequences) for _ in range(n_envs)])
    
     logger.info(f'Vectorized environments created, wrapping with monitor')

@@ -5,7 +5,7 @@ import zipfile
 import boto3
 import numpy as np
 import torch
-import logging 
+
 
 class NPZExtractor:
     logger = logging.getLogger('likelihood_engagement')

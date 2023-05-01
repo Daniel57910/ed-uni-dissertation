@@ -1,6 +1,6 @@
 import torch 
 from torch import nn
-N_FEATURES = 18
+N_FEATURES = 20
 class LSTMOrdinal(nn.Module):
     def __init__(self,  hidden_size=32, dropout=0.2) -> None:
         super(LSTMOrdinal, self).__init__()

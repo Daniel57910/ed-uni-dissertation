@@ -3,6 +3,7 @@ SESSION_INDEX = 2
 TASK_INDEX = 3
 import numpy as np
 
+
 class Constant20Agent:
     def __init__(self):
         self.action_space = [0, 1]

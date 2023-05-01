@@ -1,8 +1,9 @@
-from rl_constant import RL_STAT_COLUMNS
-from stable_baselines3.common.callbacks import  BaseCallback
-from stable_baselines3.common.logger import TensorBoardOutputFormat
 import numpy as np
 import pandas as pd
+from rl_constant import RL_STAT_COLS
+from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.logger import TensorBoardOutputFormat
+
 
 class DistributionCallback(BaseCallback):
     
@@ -22,7 +23,7 @@ class DistributionCallback(BaseCallback):
 
             values_df = pd.DataFrame(
                 values_to_log, 
-                columns=RL_STAT_COLUMNS + ['ended', 'incentive_index', 'n_episodes']
+                columns=RL_STAT_COLS + ['ended', 'incentive_index', 'n_episodes']
             )
             
             dist_session_time = (values_df['session_minutes'] - values_df['reward']).mean()

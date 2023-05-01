@@ -1,4 +1,2 @@
-investigate and understand cum_session_time_raw
-fix bug
- - not function of reward 
-resample to 1 event rather than shuffle all 
+update statistics in environment
+begin custom policy implementation

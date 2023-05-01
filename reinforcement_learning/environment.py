@@ -1,23 +1,14 @@
+# %load environment
 import numpy as np
 from scipy.stats import norm 
-from rl_constant import FEATURE_COLS, META_COLS, RL_STAT_COLUMNS
-
-
 import gym
-
-import numpy as np
-from scipy.stats import norm 
-
-
-import gym
-
-
+from rl_constant import RL_STAT_COLS
 
 class CitizenScienceEnv(gym.Env):
     
     metadata = {'render.modes': ['human']}
     
-    def __init__(self, dataset, unique_episodes, unique_sessions, n_sequences):
+    def __init__(self, dataset, unique_episodes, unique_sessions, out_features, n_sequences):
         """
         trajectories: dictionary of user_id to their respective trajectories.
         n_sequences: number of sequences used for preprocessing.
@@ -34,15 +25,15 @@ class CitizenScienceEnv(gym.Env):
         self.reward = 0
         self.metadata_container = []
         self.n_sequences = n_sequences
-        self.out_features = FEATURE_COLS + ['pred_ordinal_10']
+        self.out_features = out_features
         
         self.action_space = gym.spaces.Discrete(2)
-        self.observation_space = gym.spaces.Box(low=0, high=1, shape=(n_sequences + 1, len(self.out_features)), dtype=np.float32)
+        self.observation_space = gym.spaces.Box(low=-1, high=1, shape=(n_sequences + 1, len(self.out_features)), dtype=np.float32)
 
     def reset(self):
         self.n_episodes += 1
-        session_to_run = self.unique_sessions.sample(1)['session_30'].values[0]
-        user_to_run = self.unique_episodes[self.unique_episodes['session_30'] == session_to_run].sample(1)['user_id'].values[0]
+        session_to_run = self.unique_sessions.sample(1)['session_30_raw'].values[0]
+        user_to_run = self.unique_episodes[self.unique_episodes['session_30_raw'] == session_to_run].sample(1)['user_id'].values[0]
         self.current_session = self._get_events(user_to_run, session_to_run)
         self.metadata = self._metadata()
         self.current_session_index = 0
@@ -52,18 +43,20 @@ class CitizenScienceEnv(gym.Env):
     def step(self, action):
         self._take_action(action)
         next_state, done, meta = self._calculate_next_state()
+        
         if done:
-            self.metadata['ended'] = self.current_session_index + 1
+            curent_session_index = min(self.current_session_index, self.current_session.shape[0] - 1)
+            self.metadata['ended'] = self.current_session.iloc[curent_session_index]['cum_session_event_raw']
             self.metadata['reward'] = self.reward
             self.metadata_container.append(self.metadata.values)
-            return next_state, self.reward, done, meta
+            return next_state, float(self.reward), done, meta
         else:
             self.reward = self.current_session.iloc[self.current_session_index]['reward'] 
             self.current_session_index += 1        
-        return next_state, self.reward, done, meta
+        return next_state, float(self.reward), done, meta
     
     def _metadata(self):
-        session_metadata = self.current_session.iloc[0][RL_STAT_COLUMNS]
+        session_metadata = self.current_session.iloc[0][RL_STAT_COLS]
         session_metadata['ended'] = 0
         session_metadata['incentive_index'] = 0
         session_metadata['n_episodes'] = self.n_episodes
@@ -84,15 +77,16 @@ class CitizenScienceEnv(gym.Env):
   
     def _continuing_in_session(self):
         sim_counts = self.metadata['sim_size']
-        if self.current_session_index < sim_counts:
+        current_session_count = self.current_session.iloc[self.current_session_index]['cum_session_event_raw']
+        if current_session_count < sim_counts:
             return True
         
-        extending_session = self._probability_extending_session()
+        extending_session = self._probability_extending_session(current_session_count)
         
         return all([extending_session >= .3, extending_session <= .7])
         
     
-    def _probability_extending_session(self):
+    def _probability_extending_session(self, current_session_count):
         if self.metadata['incentive_index'] == 0:
             return 0
         
@@ -100,7 +94,7 @@ class CitizenScienceEnv(gym.Env):
         continue_session = norm(
             loc=self.metadata['incentive_index'],
             scale=scale
-        ).cdf(self.current_session_index)
+        ).cdf(current_session_count)
         
         return continue_session
         
@@ -108,16 +102,17 @@ class CitizenScienceEnv(gym.Env):
     def _get_events(self, user_id, session):
         subset = self.dataset[
             (self.dataset['user_id'] == user_id) &
-            (self.dataset['session_30'] == session)
+            (self.dataset['session_30_raw'] == session)
         ]
    
-        return subset.sort_values('cum_session_event_raw').reset_index(drop=True)
+        return subset.sort_values(by=['date_time']).reset_index(drop=True)
     
     def _take_action(self, action):
         if action == 0 or self.metadata['incentive_index'] > 0:
             return
         
-        self.metadata['incentive_index'] = self.current_session_index
+        current_session_index = min(self.current_session_index, self.current_session.shape[0] - 1)
+        self.metadata['incentive_index'] = self.current_session.iloc[current_session_index]['cum_session_event_raw']
         
     def _state(self):
 

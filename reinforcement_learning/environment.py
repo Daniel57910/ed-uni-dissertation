@@ -28,7 +28,7 @@ class CitizenScienceEnv(gym.Env):
         self.out_features = out_features
         
         self.action_space = gym.spaces.Discrete(2)
-        self.observation_space = gym.spaces.Box(low=-1, high=1, shape=(n_sequences + 1, len(self.out_features)), dtype=np.float32)
+        self.observation_space = gym.spaces.Box(low=-1, high=1, shape=(len(out_features), n_sequences + 1), dtype=np.float32)
 
     def reset(self):
         self.n_episodes += 1

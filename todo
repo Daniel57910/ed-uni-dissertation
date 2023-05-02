@@ -1,5 +1,4 @@
-begin custom policy implementation
-    - understand cnn1d 
-    - understand and define custom policy
-    - get custom policy working locally
-    - understand custom policy evaluation and rl evaluation during training
+Ensure network architecture operating correctly
+Write out understanding of customization
+Redefine experiments around DQN as baseline 
+Next steps planned

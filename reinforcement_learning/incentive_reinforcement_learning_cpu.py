@@ -3,7 +3,8 @@ import numpy as np
 import torch
 from stable_baselines3.common.callbacks import CallbackList, StopTrainingOnMaxEpisodes, CheckpointCallback
 from stable_baselines3 import A2C, DQN, PPO
-from policies.cnn_policy import CustomConv1dPolicy, TestConv1
+from policies.cnn_policy import CustomConv1dFeatures
+from stable_baselines3.dqn.policies import DQNPolicy
 from stable_baselines3.common.env_checker import check_env
 import logging
 import pandas as pd
@@ -19,6 +20,26 @@ from rl_constant import (
     OUT_FEATURE_COLUMNS,
     PREDICTION_COLS
 )
+from typing import Callable
+
+def linear_schedule(initial_value: float) -> Callable[[float], float]:
+    """
+    Linear learning rate schedule.
+
+    :param initial_value: Initial learning rate.
+    :return: schedule that computes
+      current learning rate depending on remaining progress
+    """
+    def func(progress_remaining: float) -> float:
+        """
+        Progress will decrease from 1 (beginning) to 0.
+
+        :param progress_remaining:
+        :return: current learning rate
+        """
+        return progress_remaining * initial_value
+
+    return func
 
 # %load incentive_reinforcement_learning_cpu.py
 import numpy as np
@@ -135,6 +156,7 @@ def convolve_delta_events(df):
 
     return df
 
+    
 def main(args):
     
     exec_time = datetime.now().strftime("%Y-%m-%d-%H-%M")
@@ -199,22 +221,24 @@ def main(args):
     env = CitizenScienceEnv(df, unique_episodes, unique_sessions, out_features, n_sequences)
     
     policy_kwargs = dict(
-        features_extractor_class=CustomConv1dPolicy,
-        features_extractor_kwargs=dict(features_dim=64)
+        features_extractor_class=CustomConv1dFeatures,
+        net_arch=[20, 10, 2]
     )
-    
-    policy = CustomConv1dPolicy(env.observation_space, 11, 21, 64)
-    
-    step = env.reset()
-    step = torch.from_numpy(step).float()
-    step = policy(step)
-    print(step.shape)
-    return
-    
-    custom_dqn = PPO(policy="CnnPolicy", env=env, policy_kwargs=policy_kwargs, verbose=1)
+        
+    custom_dqn = DQN(policy='MlpPolicy', env=env, verbose=2, policy_kwargs=policy_kwargs)
+  
     print(custom_dqn.policy)
-    
-    # custom_dqn.learn(total_timesteps=100_000, progress_bar=True) 
+
+    state = env.reset()
+    act = custom_dqn.predict(state)
+    done = False
+    while not done:
+        state, rewards, done, meta = env.step(act)
+        if not done:
+            act = custom_dqn.predict(state)
+        print(f'Reward: {rewards}')
+         
+   
     return
     citizen_science_vec = DummyVecEnv([lambda: CitizenScienceEnv(df, unique_episodes, unique_sessions, out_features, n_sequences) for _ in range(n_envs)])
    
@@ -263,4 +287,4 @@ def main(args):
 
 if __name__ == "__main__":
     args = parse_args()
-main(args)
+    main(args)

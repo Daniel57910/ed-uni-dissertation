@@ -10,7 +10,7 @@ class DistributionCallback(BaseCallback):
     @classmethod
     def tensorboard_setup(cls, log_dir, log_freq):
         cls._log_dir = log_dir
-        cls._log_freq = log_freq
+        cls._log_freq = 10
 
     def _on_training_start(self) -> None:
         output_formats = self.logger.output_formats

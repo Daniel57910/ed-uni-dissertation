@@ -21,7 +21,7 @@ from rl_constant import (
     PREDICTION_COLS
 )
 from typing import Callable
-
+from functools import reduce
 def linear_schedule(initial_value: float) -> Callable[[float], float]:
     """
     Linear learning rate schedule.
@@ -88,16 +88,22 @@ def train_eval_split(dataset, logger):
 
 def generate_metadata(dataset):
     
+    
+    
+    
     session_size = dataset.groupby(['user_id', 'session_30_raw'])['size_of_session'].max().reset_index(name='session_size')
     session_minutes = dataset.groupby(['user_id', 'session_30_raw'])['cum_session_time_raw'].max().reset_index(name='session_minutes')
-    session_minutes['sim_minutes'] = session_minutes['session_minutes'] * .7
-    session_size['sim_size'] = (session_size['session_size'] * .7).astype(int).apply(lambda x: x if x > 1 else 1)
-    dataset = dataset.merge(session_size, on=['user_id', 'session_30_raw'])
-    dataset = dataset.merge(session_minutes, on=['user_id', 'session_30_raw'])
+    
+    sim_minutes = dataset.groupby(['user_id', 'session_30_raw'])['cum_session_time_raw'].quantile(.7, interpolation='nearest').reset_index(name='sim_minutes')
+    sim_size = dataset.groupby(['user_id', 'session_30_raw'])['cum_session_event_raw'].quantile(.7, interpolation='nearest').reset_index(name='sim_size')
+    
+    
+    sessions = [session_size, session_minutes, sim_minutes, sim_size]
+    sessions = reduce(lambda left, right: pd.merge(left, right, on=['user_id', 'session_30_raw']), sessions)
+    dataset = pd.merge(dataset, sessions, on=['user_id', 'session_30_raw'])
     dataset['reward'] = dataset['cum_session_time_raw']
     return dataset
-   
-   
+
 
 def parse_args():
     parse = argparse.ArgumentParser()
@@ -110,7 +116,7 @@ def parse_args():
     parse.add_argument('--device', type=str, default='cpu')
     parse.add_argument('--checkpoint_freq', type=int, default=1000)
     parse.add_argument('--tb_log', type=int, default=100)
-    
+    parse.add_argument('--feature_extractor', type=str, default='cnn') 
     args = parse.parse_args()
     return args
 
@@ -166,7 +172,7 @@ def main(args):
     
     logger.info('Starting Incentive Reinforcement Learning')
     
-    read_path, n_files, n_sequences, n_episodes, device, n_envs, lstm, tb_log, check_freq = (
+    read_path, n_files, n_sequences, n_episodes, device, n_envs, lstm, tb_log, check_freq, feature_ext = (
         args.read_path, 
         args.n_files, 
         args.n_sequences, 
@@ -175,7 +181,8 @@ def main(args):
         args.n_envs,
         args.lstm,
         args.tb_log,
-        args.checkpoint_freq
+        args.checkpoint_freq,
+        args.feature_extractor
     )
     
     read_path = os.path.join(
@@ -204,67 +211,64 @@ def main(args):
     size_of_session = df.groupby(['user_id', 'session_30_raw']).size().reset_index(name='size_of_session')
     df = pd.merge(df, size_of_session, on=['user_id', 'session_30_raw'])
     df['cum_session_event_raw'] = df.groupby(['user_id', 'session_30_raw'])['date_time'].cumcount() + 1
+    
+    logger.info(f'Convolution over 2 minute window')
     df = convolve_delta_events(df)
-   
+    logger.info(f'Convolving over 2 minute window complete: generating metadata')
+    df = generate_metadata(df) 
+    logger.info(f'Metadata generated: selecting events only at 2 minute intervals')
     df = df[df['minute'] % 2 == 0]
     logger.info(f'Data read: {df.shape[0]} rows, {df.shape[1]} columns, dropping events within 2 minute window')
     df = remove_events_in_2_minute_window(df)
     df = df.reset_index(drop=True)
     
     logger.info(f'Number of events after dropping events within 2 minute window: {df.shape[0]}')
-    df = generate_metadata(df)
-
+    
     unique_episodes = df[['user_id', 'session_30_raw']].drop_duplicates()
     unique_sessions = df[['session_30_raw']].drop_duplicates()
     df = df.drop(columns=['year', 'month', 'day', 'hour', 'minute', 'second', 'second_window'])
     
-    env = CitizenScienceEnv(df, unique_episodes, unique_sessions, out_features, n_sequences)
+    citizen_science_vec =DummyVecEnv([lambda: CitizenScienceEnv(df, unique_episodes, unique_sessions, out_features, 10) for i in range(n_envs)])
+    logger.info(f'Vectorized environments created')
     
-    policy_kwargs = dict(
-        features_extractor_class=CustomConv1dFeatures,
-        net_arch=[20, 10, 2]
-    )
-        
-    custom_dqn = DQN(policy='MlpPolicy', env=env, verbose=2, policy_kwargs=policy_kwargs)
-  
-    print(custom_dqn.policy)
-
-    state = env.reset()
-    act = custom_dqn.predict(state)
-    done = False
-    while not done:
-        state, rewards, done, meta = env.step(act)
-        if not done:
-            act = custom_dqn.predict(state)
-        print(f'Reward: {rewards}')
-         
-   
-    return
-    citizen_science_vec = DummyVecEnv([lambda: CitizenScienceEnv(df, unique_episodes, unique_sessions, out_features, n_sequences) for _ in range(n_envs)])
-   
-    logger.info(f'Vectorized environments created, wrapping with monitor')
-
     base_path = os.path.join(
-        # S3_BASELINE_PATH,
+        S3_BASELINE_PATH,
         'reinforcement_learning_incentives',
         f'n_files_{n_files}',
         'results',
         exec_time,
     ) 
     
+    
     tensorboard_dir, checkpoint_dir = (
         os.path.join(base_path, 'training_metrics'),
         os.path.join(base_path, 'checkpoints')
     )
 
+    logger.info(f'Creating callbacks, monitors and loggerss')
     callback_max_episodes = StopTrainingOnMaxEpisodes(max_episodes=n_episodes, verbose=1)
     checkpoint_callback = CheckpointCallback(save_freq=check_freq // n_envs, save_path=checkpoint_dir, name_prefix='rl_model')
     dist_callback = DistributionCallback()
     DistributionCallback.tensorboard_setup(tensorboard_dir, tb_log)
     callback_list = CallbackList([callback_max_episodes, dist_callback, checkpoint_callback])
     monitor_train = VecMonitor(citizen_science_vec)
+   
+    if feature_ext == 'cnn':
+        logger.info('Using custom 1 dimensional CNN feature extractor')
+        policy_kwargs = dict(
+            features_extractor_class=CustomConv1dFeatures,
+            net_arch=[20, 10]
+        )
+        model = DQN(policy='MlpPolicy', env=monitor_train, verbose=1, tensorboard_log=tensorboard_dir, policy_kwargs=policy_kwargs, device=device, stats_window_size=1000)
+    else:
+        logger.info('Using default MLP feature extractor')
+        model = DQN(policy='MlpPolicy', env=monitor_train, verbose=1, tensorboard_log=tensorboard_dir, policy_kwargs=policy_kwargs, device=device, stats_window_size=1000)
     
-    model = DQN("MlpPolicy", monitor_train, verbose=1, tensorboard_log=tensorboard_dir, stats_window_size=1000)
+    logger.info(f'Model created: policy')
+    
+    logger.info(pformat(model.policy))
+        
+    logger.info(f'Beginning training') 
             
     logger.info(pformat([
         'n_epochs: {}'.format(n_episodes),
@@ -278,9 +282,8 @@ def main(args):
         'tensorboard_dir: {}'.format(tensorboard_dir),
         'checkpoint_dir: {}'.format(checkpoint_dir)
     ]))
-
-
-    model.learn(total_timesteps=100_000_000, progress_bar=True, log_interval=1000, callback=callback_list)
+    
+    model.learn(total_timesteps=100000, progress_bar=True, log_interval=1000, callback=callback_list)
     
 
     

@@ -15,15 +15,25 @@ class CustomConv1dFeatures(BaseFeaturesExtractor):
             nn.Conv1d(n_features, n_features*2, kernel_size=3, padding=1),
             nn.BatchNorm1d(n_features*2),
             nn.ReLU(),
-            nn.Conv1d(n_features*2, n_features, kernel_size=3, padding=1),
-            nn.BatchNorm1d(n_features),
+            
+            nn.Conv1d(n_features*2, n_features*2, kernel_size=3, padding=1),
+            nn.BatchNorm1d(n_features*2),
             nn.ReLU(),
+            
+            nn.Conv1d(n_features*2, n_features*2, kernel_size=3, padding=1),
+            nn.BatchNorm1d(n_features*2),
+            nn.Conv1d(n_features*2, n_features*2, kernel_size=3, padding=1),
+            
             nn.AvgPool1d(2)
         )
         
         self.cnn_2 = nn.Sequential(
-            nn.Conv1d(n_features, n_features // 2, kernel_size=3, padding=1),
-            nn.BatchNorm1d(n_features // 2),
+            nn.Conv1d(n_features*2, n_features, kernel_size=3, padding=1),
+            nn.BatchNorm1d(n_features),
+            nn.ReLU(),
+            
+            nn.Conv1d(n_features, n_features, kernel_size=3, padding=1),
+            nn.BatchNorm1d(n_features),
             nn.ReLU()
         )
         

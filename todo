@@ -1,17 +1,16 @@
-restore to git 
+evaluation:
+    load_model
+    get 1 action
+    UML iterating over environment 
+
+
 setup Q1:
-
-    CNN label
-    MLP label
-    CNN label+signal
-
-    CNN seq_40
-    ML seq_40
-    CNN seq_40+signal
-
-    CNN None
-    CNN None+signal
+    MLP seq_40
+    DQN None
     MLP None
 
+    CNN label+signal
+    CNN seq_40+signal
+    CNN None+signal
 
 

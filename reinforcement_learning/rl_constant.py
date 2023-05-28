@@ -57,6 +57,8 @@ RL_STAT_COLS = [
     'sim_size',
     'session_minutes',
     'sim_minutes',
+    'cum_session_event_raw',
+    'cum_platform_time_raw',
     'reward',
     'session_30_raw',
     'cum_platform_time_raw',

@@ -1,9 +1,11 @@
 import pandas as pd
 import logging
+from rl_constant import LABEL, METADATA, OUT_FEATURE_COLUMNS, PREDICTION_COLS, RL_STAT_COLS
 
 global logger
 logger = logging.getLogger('rl_results_eval')
 from functools import reduce
+from pprint import pformat
 
 def remove_events_in_minute_window(df):
     df['second_window'] = df['second'] // 10
@@ -14,8 +16,10 @@ def remove_events_in_minute_window(df):
 
     return df
 
-
+import pdb
 def convolve_delta_events(df, window):
+    
+    before_resample = df.shape
     df['convolved_delta_event'] = (
         df.set_index('date_time').groupby(by=['user_id', 'session_30_raw'], group_keys=False) \
             .rolling(f'{window}T', min_periods=1)['delta_last_event'] \
@@ -24,8 +28,33 @@ def convolve_delta_events(df, window):
     )
 
     df['delta_last_event'] = df['convolved_delta_event']
+    
+    logger.info(f'Convolution complete: resampling with max at {window} minute intervals')
+    sampled_events = df.sort_values(by=['date_time']) \
+        .set_index('date_time') \
+        .groupby(['user_id', 'session_30_raw']) \
+        .resample(f'{window}Min')['cum_platform_event_raw'] \
+        .max() \
+        .drop(columns=['user_id', 'session_30_raw']) \
+        .reset_index() \
+        .dropna()
+    
+    logger.info(f'Resampling complete: {before_resample} -> {sampled_events.shape}')
+    logger.info(f'Joining back to original df')
+    
+    sampled_events = sampled_events[['user_id', 'cum_platform_event_raw']]
+    resampled_df = sampled_events.set_index(['user_id', 'cum_platform_event_raw']) \
+        .join(df.set_index(['user_id', 'cum_platform_event_raw']), 
+        how='inner'
+    ) \
+    .reset_index()
+    
 
-    return df
+    logger.info(f'Joining complete: {resampled_df.shape}')
+    logger.info(pformat(resampled_df.columns))
+    return resampled_df
+    
+
 
 def generate_metadata(dataset):
     
@@ -54,12 +83,5 @@ def setup_data_at_window(df, window):
     df = convolve_delta_events(df, window)
     logger.info(f'Convolving over {window} minute window complete: generating metadata')
     df = generate_metadata(df) 
-    logger.info(f'Metadata generated: selecting events only at {window} minute intervals')
-    df = df[df['minute'] % window == 0]
-    logger.info(f'Data read: {df.shape[0]} rows, {df.shape[1]} columns, dropping events within 2 minute window')
-    df = remove_events_in_minute_window(df)
-    df = df.reset_index(drop=True)
-    
-    logger.info(f'Number of events after dropping events within 2 minute window: {df.shape[0]}')
-    
-    df = df.drop(columns=['year', 'month', 'day', 'hour', 'minute', 'second', 'second_window'])
+    logger.info(f'Generating metadata complete')
+    return df

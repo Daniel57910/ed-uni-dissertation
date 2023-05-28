@@ -166,7 +166,7 @@ def main(args):
         s3.download_file(
             S3_BASELINE_PATH,     
             read_path,
-            read_pat
+            read_path
         )
              
             
@@ -198,8 +198,6 @@ def main(args):
     
     logger.info(f'Number of events after dropping events within 2 minute window: {df.shape[0]}')
     
-    unique_episodes = df[['user_id', 'session_30_raw']].drop_duplicates()
-    unique_sessions = df[['session_30_raw']].drop_duplicates()
     df = df.drop(columns=['year', 'month', 'day', 'hour', 'minute', 'second', 'second_window'])
     out_features = OUT_FEATURE_COLUMNS + [lstm] if lstm else OUT_FEATURE_COLUMNS
     
@@ -259,7 +257,6 @@ def main(args):
         'n_sequences: {}'.format(n_sequences),
         'n_envs: {}'.format(n_envs),
         'total_timesteps: {}'.format(df.shape),
-        f'unique_episodes: {unique_episodes.shape[0]}',
         'device: {}'.format(device),
         'tensorboard_dir: {}'.format(tensorboard_dir),
         'checkpoint_dir: {}'.format(checkpoint_dir)

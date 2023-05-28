@@ -166,7 +166,7 @@ def main(args):
         s3.download_file(
             S3_BASELINE_PATH,     
             read_path,
-            read_path
+            read_pat
         )
              
             

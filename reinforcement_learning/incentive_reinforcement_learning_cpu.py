@@ -22,7 +22,9 @@ from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 from stable_baselines3.dqn.policies import DQNPolicy
 
-ALL_COLS = LABEL + METADATA + OUT_FEATURE_COLUMNS 
+from rl_util import setup_data_at_window
+
+ALL_COLS = METADATA + OUT_FEATURE_COLUMNS 
 
 logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p', level=logging.INFO)
 np.set_printoptions(precision=4, linewidth=200, suppress=True)
@@ -81,7 +83,7 @@ def parse_args():
     parse.add_argument('--checkpoint_freq', type=int, default=1000)
     parse.add_argument('--tb_log', type=int, default=100)
     parse.add_argument('--feature_extractor', type=str, default='cnn') 
-    parse.add_argument('--window', type=int, default=4)
+    parse.add_argument('--window', type=int, default=2)
     args = parse.parse_args()
     return args
 
@@ -127,6 +129,10 @@ def convolve_delta_events(df, window):
 
     return df
 
+def _lstm_loader(lstm):
+    
+    return LABEL[0] if lstm == 'label' else lstm
+
 random.seed(42)
 np.random.seed(42)
 torch.manual_seed(42)
@@ -169,46 +175,32 @@ def main(args):
             read_path
         )
              
-            
+    lstm = _lstm_loader(lstm)
+    read_cols, out_features = (
+        ALL_COLS + [lstm] if lstm else ALL_COLS,
+        OUT_FEATURE_COLUMNS + [lstm] if lstm else OUT_FEATURE_COLUMNS
+    )
+    
     logger.info(f'Reading data from {read_path}')
     
-    logger.info(f'Setting up model with prediction {lstm}')
-    df = pd.read_parquet(read_path, columns=ALL_COLS + [args.lstm] if args.lstm else ALL_COLS)
-    df['date_time'] = pd.to_datetime(df[['year', 'month', 'day', 'hour', 'minute', 'second']], errors='coerce')
+    logger.info(f'Running exp with ')
+    logger.info(pformat(read_cols))
+ 
+    df = pd.read_parquet(
+        f'{read_path}/files_used_{n_files}/predicted_data.parquet',
+        columns=read_cols
+    )
 
+    logger.info(f'Loaded data with shape {df.shape}')
+    logger.info(f'Setting up convolution over {window}T minutes')
+    df = setup_data_at_window(df, window)
 
-    df = df.sort_values(by=['date_time'])    
-    
-    logger.info(f'N events:: {df.shape[0]} creating training partitions')
-    df = df.head(int(df.shape[0] * .7))
-    logger.info(f'N events after 70% split: {df.shape[0]}')
-    size_of_session = df.groupby(['user_id', 'session_30_raw']).size().reset_index(name='size_of_session')
-    df = pd.merge(df, size_of_session, on=['user_id', 'session_30_raw'])
-    df['cum_session_event_raw'] = df.groupby(['user_id', 'session_30_raw'])['date_time'].cumcount() + 1
-    
-    logger.info(f'Convolution over {window} minute window')
-    df = convolve_delta_events(df, window)
-    logger.info(f'Convolving over {window} minute window complete: generating metadata')
-    df = generate_metadata(df) 
-    logger.info(f'Metadata generated: selecting events only at {window} minute intervals')
-    df = df[df['minute'] % window == 0]
-    logger.info(f'Data read: {df.shape[0]} rows, {df.shape[1]} columns, dropping events within 2 minute window')
-    df = remove_events_in_minute_window(df)
-    df = df.reset_index(drop=True)
-    
-    logger.info(f'Number of events after dropping events within 2 minute window: {df.shape[0]}')
-    
-    df = df.drop(columns=['year', 'month', 'day', 'hour', 'minute', 'second', 'second_window'])
-    out_features = OUT_FEATURE_COLUMNS + [lstm] if lstm else OUT_FEATURE_COLUMNS
-    
-
-    
     citizen_science_vec =DummyVecEnv([lambda: CitizenScienceEnv(df, out_features, n_sequences) for i in range(n_envs)])
     logger.info(f'Vectorized environments created')
     
     base_path = os.path.join(
         S3_BASELINE_PATH,
-        'reinforcement_learning_incentives',
+        'reinforcement_learning_incentives_3',
         f'n_files_{n_files}',
         feature_ext + '_' + 'label' if lstm.startswith('continue') else lstm,
         'results',

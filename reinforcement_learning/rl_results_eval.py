@@ -42,6 +42,7 @@ def parse_args():
     parse = argparse.ArgumentParser()
     parse.add_argument('--algo', type=str, default='DQN')
     parse.add_argument('--read_path', type=str, default='datasets/rl_ready_data')
+    parse.add_argument('--write_path', type=str, default='datasets/rl_results')
     parse.add_argument('--n_files', type=int, default=2)
     parse.add_argument('--n_sequences', type=int, default=40)
     parse.add_argument('--lstm', type=str, default='label')
@@ -211,11 +212,19 @@ def main(args):
     
     logger.info(f'Experiments ran')
     
-    experiments_df = pd.DataFrame(experiments)
-    print(experiments_df.columns)
-
-
-
+    experiments_df = pd.DataFrame(experiments) 
+    
+    if not os.path.exists(args.write_path):
+        os.makedirs(args.write_path)
+        
+    write_path = os.path.join(
+        args.write_path,
+        f'{algo}_{feature_extractor}_{lstm}_{run_time}.parquet'
+    )
+    
+    logger.info(f'Writing results to {write_path}')
+    
+    experiments_df.to_parquet(write_path)
 
     
 

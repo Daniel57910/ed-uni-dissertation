@@ -47,8 +47,9 @@ class CitizenScienceEnv(gym.Env):
         next_state, done, meta = self._calculate_next_state()
         
         if done:
-            curent_session_index = min(self.current_session_index, self.current_session.shape[0] - 1)
-            self.metadata['ended'] = self.current_session.iloc[curent_session_index]['cum_session_event_raw']
+            current_session_index = self.current_session_index if \
+                self.current_session_index != self.current_session.shape[0] else self.current_session_index - 1
+            self.metadata['ended'] = self.current_session.iloc[current_session_index]['cum_session_event_raw']
             self.metadata['reward'] = self.reward
             self.metadata['date_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             self.metadata_container.append(self.metadata.values)

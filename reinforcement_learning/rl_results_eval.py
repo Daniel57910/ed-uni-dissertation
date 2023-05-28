@@ -110,7 +110,9 @@ def run_session(dataset, feature_meta, model, out_features, n_sequences):
     while not done:
         action, _states = model.predict(step, deterministic=True)
         step, rewards, done, info = env.step(action)
-    return info     
+    return info
+
+     
 def run_experiment(model, dataset, out_features, n_sequences, device, lstm):
    
     info_container = []
@@ -124,7 +126,7 @@ def run_experiment(model, dataset, out_features, n_sequences, device, lstm):
         unique_sessions_bar.set_description(f'U {user_id} S {session_30_raw}:')
         session_meta = run_session(dataset, {'user_id': user_id, 'session_30_raw': session_30_raw}, model, out_features, n_sequences)
         info_container.append(session_meta)
-        if _ > 2:
+        if _ > 5:
             break
         
     return info_container
@@ -211,6 +213,7 @@ def main(args):
     
     experiments_df = pd.DataFrame(experiments)
     print(experiments_df.columns)
+
 
 
 

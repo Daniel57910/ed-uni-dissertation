@@ -19,7 +19,7 @@ from stable_baselines3 import DQN, PPO, A2C, SAC, TD3
 import tqdm
 from joblib import Parallel, delayed
 import json
-
+from pqdm.processes import pqdm
 ALL_COLS = LABEL + METADATA + OUT_FEATURE_COLUMNS  + PREDICTION_COLS
 
 logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p', level=logging.INFO)
@@ -111,7 +111,9 @@ def _lstm_loader(lstm):
         return LABEL if lstm == 'label' else ['seq_20']
     return []
 
-def run_session(dataset, feature_meta, model, out_features, n_sequences):
+def run_session(args):
+    dataset, feature_meta, model, out_features, n_sequences, info_container = args
+    _, feature_meta = feature_meta
     subset = dataset[
         (dataset['user_id'] == feature_meta['user_id']) &
         (dataset['session_30_raw'] == feature_meta['session_30_raw'])
@@ -123,24 +125,27 @@ def run_session(dataset, feature_meta, model, out_features, n_sequences):
     while not done:
         action, _states = model.predict(step, deterministic=True)
         step, rewards, done, info = env.step(action)
-    return info
+    info_container.append(info)
+    
+    return info_container
 
-import pdb
 def run_experiment(model, dataset, out_features, n_sequences):
+    
+    info_container = []
     
     dataset = dataset.loc[:,~dataset.columns.duplicated()].copy()
     info_container = []
     unique_sessions = dataset[['user_id', 'session_30_raw']].drop_duplicates() 
     logger.info(f'Running experiment with {model}: n_session={len(unique_sessions)}')
     
-    for _, session in enumerate(unique_sessions.iterrows()):
-        indx, session = session
-        user_id, session_30_raw = int(session['user_id']), int(session['session_30_raw'])
-        session_meta = run_session(dataset, {'user_id': user_id, 'session_30_raw': session_30_raw}, model, out_features, n_sequences)
-        info_container.append(session_meta)
-        if _ > 10:
-            break
+    args = [
+        (dataset, feature_meta, model, out_features, n_sequences, info_container) for _, feature_meta in unique_sessions.iterrows()
+    ]
+    
+    pqdm(args, run_session, n_jobs=8)
+    
     return info_container
+
         
     
         
@@ -233,10 +238,14 @@ def main(args):
     
     
     df = get_dataset(read_path, conv_path, n_files, window)
+    df = df[:10000]
     with open('rl_policies.json') as f:
         rl_meta = json.load(f)
         
-    Parallel(n_jobs=8, prefer='threads')(delayed(run_exp_wrapper)(r, df.copy(), write_path) for r in rl_meta)
+    for r in rl_meta:
+        logger.info(f'Running evaluation for {r}')
+        run_exp_wrapper(r, df.copy(), write_path)
+        
    
 
 

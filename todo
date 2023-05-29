@@ -1,6 +1,4 @@
-
-
-setup Q1 2 files local
+ensure parallel over 2 files local
 setup Q1 2 files GPU
 setup Q1 10 files GPU
 setup Q1 30 files GPU

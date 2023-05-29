@@ -17,6 +17,7 @@ from rl_util import setup_data_at_window
 from rl_constant import LABEL, METADATA, OUT_FEATURE_COLUMNS, PREDICTION_COLS, RL_STAT_COLS
 from stable_baselines3 import DQN, PPO, A2C, SAC, TD3
 import tqdm
+from joblib import Parallel, delayed
 import json
 
 ALL_COLS = LABEL + METADATA + OUT_FEATURE_COLUMNS  + PREDICTION_COLS
@@ -132,11 +133,9 @@ def run_experiment(model, dataset, out_features, n_sequences):
     unique_sessions = dataset[['user_id', 'session_30_raw']].drop_duplicates() 
     logger.info(f'Running experiment with {model}: n_session={len(unique_sessions)}')
     
-    unique_sessions_bar = tqdm.tqdm(unique_sessions.iterrows(), total=len(unique_sessions))
-    for _, session in enumerate(unique_sessions_bar):
+    for _, session in enumerate(unique_sessions.iterrows()):
         indx, session = session
         user_id, session_30_raw = int(session['user_id']), int(session['session_30_raw'])
-        unique_sessions_bar.set_description(f'U {user_id} S {session_30_raw}:')
         session_meta = run_session(dataset, {'user_id': user_id, 'session_30_raw': session_30_raw}, model, out_features, n_sequences)
         info_container.append(session_meta)
         if _ > 10:
@@ -236,65 +235,10 @@ def main(args):
     df = get_dataset(read_path, conv_path, n_files, window)
     with open('rl_policies.json') as f:
         rl_meta = json.load(f)
-    
-    for r in rl_meta:
-        run_exp_wrapper(r, df, write_path)
         
-    
-    return
+    Parallel(n_jobs=8, prefer='threads')(delayed(run_exp_wrapper)(r, df.copy(), write_path) for r in rl_meta)
+   
 
-
-    policy_weights = get_policy(client, feature_extractor, lstm, run_time, algo)
-    
-    logger.info(f'Loading data from {read_path}')
-    
-    logger.info(f'Loaded data with shape {df.shape}')
-    env = CitizenScienceEnv(df, out_features, n_sequences)
-    logger.info(f'Loaded data with shape {df.shape}')
-    
-    if feature_extractor == 'cnn':
-        CustomConv1dFeatures.setup_sequences_features(n_sequences + 1, len(out_features))
-        logger.info(f'Using custom CNN feature extractor')
-        policy_kwargs = dict(
-            features_extractor_class=CustomConv1dFeatures,
-            net_arch=[10]
-        )
-        
-        model = DQN(policy='CnnPolicy', env=env, policy_kwargs=policy_kwargs)
-        model.set_parameters(policy_weights)
-    
-    
-    logger.info(f'Getting evaluation with following parameters')
-    logger.info(pformat({
-        'algo': algo,
-        'feature_extractor': feature_extractor,
-        'lstm': lstm,
-        'n_sequences': n_sequences,
-        'n_files': n_files,
-        'window': window,
-        'run_time': run_time,
-         
-    }))
-    
-    experiments = run_experiment(model, df, out_features, n_sequences, device, lstm)
-    
-    logger.info(f'Experiments ran')
-    
-    experiments_df = pd.DataFrame(experiments) 
-    
-    if not os.path.exists(args.write_path):
-        os.makedirs(args.write_path)
-        
-    write_path = os.path.join(
-        args.write_path,
-        f'{algo}_{feature_extractor}_{lstm}_{run_time}.parquet'
-    )
-    
-    logger.info(f'Writing results to {write_path}')
-    
-    experiments_df.to_parquet(write_path)
-
-    
 
 
 if __name__ == '__main__':

@@ -1,7 +1,7 @@
-generate results for first 2 models 2 files w subset
-generate results 30 files 2 models w subset
-inc number of models 
-get results all files all models 
+generate results for n models 2 files subset local 
+generate results n models 2 files subset gpu
+generate results n models 2 files gpu
+generate results n models 30 files gpu
 
 re-establish experiments under conv data
 review
@@ -9,4 +9,3 @@ review
     dispersion
     detrending
 
-    

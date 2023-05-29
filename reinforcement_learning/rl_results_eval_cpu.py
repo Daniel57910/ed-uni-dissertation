@@ -20,6 +20,7 @@ import tqdm
 from joblib import Parallel, delayed
 import json
 from pqdm.processes import pqdm
+from policy_list import POLICY_LIST
 ALL_COLS = LABEL + METADATA + OUT_FEATURE_COLUMNS  + PREDICTION_COLS
 
 logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p', level=logging.INFO)
@@ -45,16 +46,11 @@ logger.setLevel(logging.INFO)
 
 def parse_args():
     parse = argparse.ArgumentParser()
-    parse.add_argument('--read_path', type=str, default='rl_ready_data')
-    parse.add_argument('--read_path_conv', type=str, default='rl_ready_data_conv')
+    parse.add_argument('--read_path', type=str, default='rl_ready_data_conv')
     parse.add_argument('--write_path', type=str, default='datasets/rl_results')
     parse.add_argument('--n_files', type=int, default=2)
-    parse.add_argument('--n_sequences', type=int, default=40)
-    parse.add_argument('--device', type=str, default='cpu')
     parse.add_argument('--window', type=int, default=2)
-    parse.add_argument('--run_time', type=str)
     parse.add_argument('--data_part', type=str, default='train')
-    
     args = parse.parse_args()
     return args
 
@@ -101,16 +97,15 @@ def get_policy(client, feature_extractor, lstm, run_time, algo):
     if not os.path.exists(model_base_path):
         logger.info(f'Creating directory {model_base_path}')
         os.makedirs(model_base_path)
-        client.download_file(S3_BASELINE_PATH, s3_candidate, download_path)
-        logger.info(f'Loading model from {s3_candidate} to {download_path}')
+    client.download_file(S3_BASELINE_PATH, s3_candidate, download_path)
+    logger.info(f'Loading model from {s3_candidate} to {download_path}')
 
     logger.info(f'Checkpoint load path: {download_path}')
     return download_path
         
 def _lstm_loader(lstm):
-    if lstm:   
-        return LABEL if lstm == 'label' else ['seq_20']
-    return []
+    if lstm == 'no_pred': return [] 
+    return LABEL if lstm == 'label' else ['seq_20']
 
 def run_session(args):
     dataset, feature_meta, model, out_features, n_sequences, info_container = args
@@ -198,6 +193,10 @@ def run_exp_wrapper(args, df, write_path):
         
             model = DQN(policy='CnnPolicy', env=env, policy_kwargs=policy_kwargs)
             model.set_parameters(policy_weights)
+        
+        else:
+            model = DQN(policy='MlpPolicy', env=env)
+            model.set_parameters(policy_weights)
             
         experiment = run_experiment(model, df, out_features, N_SEQUENCES)
         experiemnt_df = pd.DataFrame(experiment)
@@ -226,22 +225,18 @@ def main(args):
 
     logger.info('Starting offlline evaluation of RL model')
     
-    conv_path, n_files, device,  window, write_path, data_part = (
-        args.read_path_conv,
-        args.n_files, 
-        args.device, 
-        args.window, 
+    read_path, write_path, n_files, window, data_part = (
+        args.read_path,
         args.write_path,
+        args.n_files,
+        args.window,
         args.data_part
     )
     
-    
-    df = get_dataset(conv_path, n_files, window, data_part)
+    df = get_dataset(read_path, n_files, window, data_part)
     df = df[:10000]
-    with open('rl_policies.json') as f:
-        rl_meta = json.load(f)
-        
-    for r in rl_meta:
+
+    for r in POLICY_LIST:
         logger.info(f'Running evaluation for {r}')
         run_exp_wrapper(r, df.copy(), write_path)
         

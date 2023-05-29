@@ -1,9 +1,9 @@
-ensure parallel over 2 files local
-setup Q1 2 files GPU
-setup Q1 10 files GPU
-setup Q1 30 files GPU
+get conv dataset:
+    2 files
+    10 files
+    30 files
 
-measure stats and write up stats
+
 
 setup second set of experiments
 iterate over all models as part of same result set and write up

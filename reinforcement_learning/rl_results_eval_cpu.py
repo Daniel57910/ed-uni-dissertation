@@ -45,14 +45,15 @@ logger.setLevel(logging.INFO)
 
 def parse_args():
     parse = argparse.ArgumentParser()
-    parse.add_argument('--read_path', type=str, default='datasets/rl_ready_data')
-    parse.add_argument('--read_path_conv', type=str, default='datasets/rl_ready_data_conv')
+    parse.add_argument('--read_path', type=str, default='rl_ready_data')
+    parse.add_argument('--read_path_conv', type=str, default='rl_ready_data_conv')
     parse.add_argument('--write_path', type=str, default='datasets/rl_results')
     parse.add_argument('--n_files', type=int, default=2)
     parse.add_argument('--n_sequences', type=int, default=40)
     parse.add_argument('--device', type=str, default='cpu')
     parse.add_argument('--window', type=int, default=2)
     parse.add_argument('--run_time', type=str)
+    parse.add_argument('--data_part', type=str, default='train')
     
     args = parse.parse_args()
     return args
@@ -150,29 +151,27 @@ def run_experiment(model, dataset, out_features, n_sequences):
     
         
 
-def get_dataset(read_path, conv_path, n_files, window):
+def get_dataset(conv_path, n_files, window, part='train'):
     
-    conv_path, read_path = (
-        os.path.join(conv_path, f'files_used_{n_files}'),
-        os.path.join(read_path, f'files_used_{n_files}', 'predicted_data.parquet')
-    )
+    
+    conv_path =  os.path.join(conv_path, f'files_used_{n_files}')
+
 
     if not os.path.exists(conv_path):
         logger.info(f'Creating directory {conv_path}')
         os.makedirs(conv_path)
+        
     
-    conv_path = os.path.join(conv_path, f'rl_conv_{window}.parquet')
+    conv_path = os.path.join(conv_path, f'window_{window}_{part}.parquet')
     
     if not os.path.exists(conv_path):
         logger.info(f'Convolutional dataset not found at {conv_path}: creating')
-        logger.info(f'Getting dataset from {read_path}')
-        df = pd.read_parquet(read_path)
-        df = setup_data_at_window(df, window)
-        logger.info(f'Saving convolutional dataset to {conv_path}')
-        df.to_parquet(conv_path)
-    else:
-        logger.info(f'Loading convolutional dataset from {conv_path}')
-        df = pd.read_parquet(conv_path)
+        logger.info(f'Getting dataset from bucket: {S3_BASELINE_PATH}, key: {conv_path}')
+        client.download_file(S3_BASELINE_PATH, conv_path, conv_path)
+        
+
+    logger.info(f'Loading convolutional dataset from {conv_path}')
+    df = pd.read_parquet(conv_path)
         
     logger.info(f'Dataset loaded: {df.shape}')
     
@@ -227,17 +226,17 @@ def main(args):
 
     logger.info('Starting offlline evaluation of RL model')
     
-    read_path, conv_path, n_files, device,  window, write_path = (
-        args.read_path,
+    conv_path, n_files, device,  window, write_path, data_part = (
         args.read_path_conv,
         args.n_files, 
         args.device, 
         args.window, 
-        args.write_path
+        args.write_path,
+        args.data_part
     )
     
     
-    df = get_dataset(read_path, conv_path, n_files, window)
+    df = get_dataset(conv_path, n_files, window, data_part)
     df = df[:10000]
     with open('rl_policies.json') as f:
         rl_meta = json.load(f)

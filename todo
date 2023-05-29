@@ -1,12 +1,12 @@
-move parallel to run_experiment
+generate results for first 2 models 2 files w subset
+generate results 30 files 2 models w subset
+inc number of models 
+get results all files all models 
 
-get conv dataset:
-    2 files
-    10 files
-    30 files
+re-establish experiments under conv data
+review
+    results per bin
+    dispersion
+    detrending
 
-
-
-setup second set of experiments
-iterate over all models as part of same result set and write up
-
+    

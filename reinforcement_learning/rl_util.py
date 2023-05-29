@@ -51,7 +51,6 @@ def convolve_delta_events(df, window):
     
 
     logger.info(f'Joining complete: {resampled_df.shape}')
-    logger.info(pformat(resampled_df.columns))
     return resampled_df
     
 

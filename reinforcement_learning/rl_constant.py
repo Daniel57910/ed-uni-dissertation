@@ -10,13 +10,7 @@ METADATA = [
     "cum_session_time_raw",
     "global_events_user",
     "global_session_time",
-    
-    "year",
-    "month",
-    "day",
-    "hour",
-    "minute",
-    "second"
+    "date_time",
 ]
 
 OUT_FEATURE_COLUMNS = [
@@ -47,6 +41,7 @@ OUT_FEATURE_COLUMNS = [
 
 PREDICTION_COLS = [
     'seq_10',
+    'sq_20'
 ]
 
 

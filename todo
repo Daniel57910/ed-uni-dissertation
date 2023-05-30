@@ -1,10 +1,8 @@
-generate results for n models 2 files subset local 
-generate results n models 2 files subset gpu
-generate results n models 2 files gpu
-generate results n models 30 files gpu
 
-re-establish experiments under conv data
-review
+re-establish training data 
+rerun rl experiments on training data 
+
+review 
     results per bin
     dispersion
     detrending

@@ -5,6 +5,8 @@ from datetime import datetime
 from functools import reduce
 from pprint import pformat
 from typing import Callable
+from stable_baselines3.common.evaluation import evaluate_policy
+from stable_baselines3.common.vec_env import DummyVecEnv
 import boto3
 import random
 import numpy as np
@@ -43,7 +45,9 @@ global logger
 
 logger = logging.getLogger('rl_results_eval')
 logger.setLevel(logging.INFO)
-
+np.random.seed(42)
+random.seed(42)
+torch.manual_seed(42)
 def parse_args():
     parse = argparse.ArgumentParser()
     parse.add_argument('--read_path', type=str, default='rl_ready_data_conv')
@@ -51,6 +55,9 @@ def parse_args():
     parse.add_argument('--n_files', type=int, default=2)
     parse.add_argument('--window', type=int, default=2)
     parse.add_argument('--data_part', type=str, default='train')
+    parse.add_argument('--model', type=str, default='DQN')
+    parse.add_argument('--feature_extractor', type=str, default='CNN')
+    parse.add_argument('--lstm', type=str, default='seq_40')
     args = parse.parse_args()
     return args
 
@@ -173,16 +180,28 @@ def get_dataset(conv_path, n_files, window, part='train'):
     return df
 
 
-def run_exp_wrapper(args, df, write_path):
+def run_exp_wrapper(args, df):
+    
+        logger.info(f'Getting policy for {args["feature_extractor"].lower()}, {args["lstm"]}, {args["run_time"]}, {args["algo"]}')
         policy_weights = get_policy(client, args['feature_extractor'].lower(), args['lstm'], args['run_time'], args['algo'])
-        print(policy_weights)
+        
+        logger.info(f'Policy weights loaded')
+
         all_features, out_features = (
             METADATA + OUT_FEATURE_COLUMNS + RL_STAT_COLS + _lstm_loader(args['lstm']),
             OUT_FEATURE_COLUMNS + _lstm_loader(args['lstm'])
         )
-        df = df[all_features]
-        env = CitizenScienceEnv(df, out_features, 40)
         
+        logger.info(f'Vectorizing dataset: {df.shape}')
+        df = df[all_features]
+        df = df.loc[:,~df.columns.duplicated()]    
+        
+        citizen_science_vec = DummyVecEnv(
+            [lambda: CitizenScienceEnv(df, out_features, 40) 
+             for i in range(10)]
+        )
+    
+        logger.info(f'Vectorized dataset, setting policy weights')
         if args['feature_extractor'].lower() == 'cnn':
             CustomConv1dFeatures.setup_sequences_features(N_SEQUENCES + 1, 21)
             logger.info(f'Using custom CNN feature extractor')
@@ -191,32 +210,31 @@ def run_exp_wrapper(args, df, write_path):
                 net_arch=[10]
             )
         
-            model = DQN(policy='CnnPolicy', env=env, policy_kwargs=policy_kwargs)
-            model.set_parameters(policy_weights)
-        
+            model = DQN(policy='CnnPolicy', env=citizen_science_vec, policy_kwargs=policy_kwargs)
         else:
-            model = DQN(policy='MlpPolicy', env=env)
-            model.set_parameters(policy_weights)
-            
-        experiment = run_experiment(model, df, out_features, N_SEQUENCES)
-        experiemnt_df = pd.DataFrame(experiment)
+            model = DQN(policy='MlpPolicy', env=citizen_science_vec)
         
-        logger.info(f'Finished experiment: {args}')
-        if not os.path.exists(write_path):
-            os.makedirs(write_path)
+        model.set_parameters(policy_weights)
         
-        write_path = os.path.join(
-            write_path,
-            f'{args["algo"]}_{args["feature_extractor"]}_{args["lstm"]}_{args["run_time"]}.parquet'   
+        logger.info(f'Policy weights set, running experiment')
+        logger.info(f'Evaluation beginning: {args["feature_extractor"]} {args["lstm"]} {args["algo"]} n_episodes=10')
+
+        evaluate_policy(
+            model,
+            citizen_science_vec,
+            10,
+            deterministic=True
         )
         
-        logger.info(f'Writing experiment to {write_path}')
+        logger.info(f'Evaluation complete: {args["feature_extractor"]} {args["lstm"]} {args["algo"]} n_episodes=10')
         
-        experiemnt_df.to_parquet(write_path)
+        info_container = citizen_science_vec.get_attr('episode_bins')
+        info_container = [i for sublist in info_container for i in sublist]
         
-    
-    
-     
+        return pd.DataFrame(info_container)
+            
+      
+ 
 def main(args):
     
     global client
@@ -225,22 +243,35 @@ def main(args):
 
     logger.info('Starting offlline evaluation of RL model')
     
-    read_path, write_path, n_files, window, data_part = (
+    read_path, write_path, n_files, window, data_part, model, feat_ext, lstm = (
         args.read_path,
         args.write_path,
         args.n_files,
         args.window,
-        args.data_part
+        args.data_part,
+        args.model,
+        args.feature_extractor,
+        args.lstm
     )
     
     df = get_dataset(read_path, n_files, window, data_part)
-    df = df[:10000]
+    
+    
+    policy_meta = next(r for r  in POLICY_LIST if r['algo'] == model and r['feature_extractor'] == feat_ext and r['lstm'] == lstm)
+    
+    if policy_meta is None:
+        raise ValueError(f'No policy found for {model}, {feat_ext}, {lstm}')
 
-    for r in POLICY_LIST:
-        logger.info(f'Running evaluation for {r}')
-        run_exp_wrapper(r, df.copy(), write_path)
-        
-   
+    logger.info(f'Running evaluation for {policy_meta}')
+    
+    evaluation_results = run_experiment(policy_meta, df)
+    logger.info(f'Summary of evaluation results: {evaluation_results.shape}')
+    write_path = os.path.join(write_path, f'window_{window}_{data_part}_{model}_{feat_ext}_{lstm}.parquet')
+
+    logger.info(f'Writing evaluation results to {write_path}')
+    
+    evaluation_results.to_parquet(write_path)
+
 
 
 

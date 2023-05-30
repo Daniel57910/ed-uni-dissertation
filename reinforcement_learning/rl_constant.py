@@ -8,6 +8,7 @@ METADATA = [
     "cum_platform_event_raw",
     "cum_platform_time_raw",
     "cum_session_time_raw",
+    "cum_session_event_raw",
     "global_events_user",
     "global_session_time",
     "date_time",
@@ -52,10 +53,5 @@ RL_STAT_COLS = [
     'sim_size',
     'session_minutes',
     'sim_minutes',
-    'cum_session_event_raw',
-    'cum_platform_time_raw',
     'reward',
-    'session_30_raw',
-    'cum_platform_time_raw',
-    'global_session_time',
 ]

@@ -34,109 +34,39 @@ pd.set_option('display.width', 1000)
 pd.set_option('display.max_rows', 500)
 
 S3_BASELINE_PATH = 's3://dissertation-data-dmiller'
-USER_INDEX = 1
-SESSION_INDEX = 2
-CUM_SESSION_EVENT_RAW = 3
-TIMESTAMP_INDEX = 11
-TRAIN_SPLIT = 0.7
-EVAL_SPLIT = 0.15
 
 
-def train_eval_split(dataset, logger):
-    train_split = int(dataset.shape[0] * TRAIN_SPLIT)
-    eval_split = int(dataset.shape[0] * EVAL_SPLIT)
-    test_split = dataset.shape[0] - train_split - eval_split
-    logger.info(f'Train size: 0:{train_split}, eval size: {train_split}:{train_split+eval_split}: test size: {train_split + eval_split}:{dataset.shape[0]}')
-    train_dataset, eval_dataset, test_split = dataset[:train_split], dataset[train_split:train_split+eval_split], dataset[train_split+eval_split:]
-    
-    return {
-        'train': train_dataset,
-        'eval': eval_dataset,
-        'test': test_split
-    }
-
-def generate_metadata(dataset):
-    
-    session_size = dataset.groupby(['user_id', 'session_30_raw'])['size_of_session'].max().reset_index(name='session_size')
-    session_minutes = dataset.groupby(['user_id', 'session_30_raw'])['cum_session_time_raw'].max().reset_index(name='session_minutes')
-    
-    sim_minutes = dataset.groupby(['user_id', 'session_30_raw'])['cum_session_time_raw'].quantile(.7, interpolation='nearest').reset_index(name='sim_minutes')
-    sim_size = dataset.groupby(['user_id', 'session_30_raw'])['cum_session_event_raw'].quantile(.7, interpolation='nearest').reset_index(name='sim_size')
-    
-    
-    sessions = [session_size, session_minutes, sim_minutes, sim_size]
-    sessions = reduce(lambda left, right: pd.merge(left, right, on=['user_id', 'session_30_raw']), sessions)
-    dataset = pd.merge(dataset, sessions, on=['user_id', 'session_30_raw'])
-    dataset['reward'] = dataset['cum_session_time_raw']
-    return dataset
-
+N_SEQUENCES = 40
+CHECKPOINT_FREQ = 100_000
+TB_LOG = 10_000
+WINDOW = 2
 
 def parse_args():
     parse = argparse.ArgumentParser()
-    parse.add_argument('--read_path', type=str, default='datasets/rl_ready_data')
+    parse.add_argument('--read_path', type=str, default='rl_ready_data_conv')
     parse.add_argument('--n_files', type=int, default=2)
     parse.add_argument('--n_episodes', type=int, default=50)
-    parse.add_argument('--n_sequences', type=int, default=40)
     parse.add_argument('--n_envs', type=int, default=100)
     parse.add_argument('--lstm', type=str, default='seq_10')
-    parse.add_argument('--device', type=str, default='cpu')
-    parse.add_argument('--checkpoint_freq', type=int, default=1000)
-    parse.add_argument('--tb_log', type=int, default=100)
+    parse.add_argument('--part', type=str, default='train')
     parse.add_argument('--feature_extractor', type=str, default='cnn') 
-    parse.add_argument('--window', type=int, default=2)
     args = parse.parse_args()
     return args
-
-
-
-def run_reinforcement_learning_incentives(environment, logger, n_episodes=1):
-    for epoch in range(n_episodes):
-        environment_comp = False
-        state = environment.reset()
-        i = 0
-        while not environment_comp:
-            next_action = (
-                1 if np.random.uniform(low=0, high=1) > 0.8 else 0
-            )
-            state, rewards, environment_comp, meta = environment.step(next_action)
-            i +=1
-            if i % 100 == 0:
-                logger.info(f'Step: {i} - Reward: {rewards}')
-                
-        logger.info(f'Epoch: {epoch} - Reward: {rewards}')
-        print(environment.user_sessions.head(10))
-
-
-def remove_events_in_minute_window(df):
-    df['second_window'] = df['second'] // 10
-    df = df.drop_duplicates(
-        subset=['user_id', 'session_30_raw', 'year', 'month', 'day', 'hour', 'minute'],
-        keep='last'
-    ).reset_index(drop=True)
-
-    return df
-
-
-def convolve_delta_events(df, window):
-    df['convolved_delta_event'] = (
-        df.set_index('date_time').groupby(by=['user_id', 'session_30_raw'], group_keys=False) \
-            .rolling(f'{window}T', min_periods=1)['delta_last_event'] \
-            .mean()
-            .reset_index(name='convolved_event_delta')['convolved_event_delta']
-    )
-
-    df['delta_last_event'] = df['convolved_delta_event']
-
-    return df
 
 def _lstm_loader(lstm):
     
     return LABEL[0] if lstm == 'label' else lstm
 
+def load_and_dedupe(read_path):
+    df = pd.read_parquet(read_path)
+    df = df.reset_index(drop=True)
+    df = df.loc[:,~df.columns.duplicated()]
+    return df
 random.seed(42)
 np.random.seed(42)
 torch.manual_seed(42)
-    
+
+
 def main(args):
     
     exec_time = datetime.now().strftime("%Y-%m-%d-%H-%M")
@@ -145,64 +75,50 @@ def main(args):
     logger.setLevel(logging.INFO)
     
     logger.info('Starting Incentive Reinforcement Learning')
+    logger.info(pformat(args.__dict__))
     
-    read_path, n_files, n_sequences, n_episodes, device, n_envs, lstm, tb_log, check_freq, feature_ext, window = (
+    read_path, n_files, n_episodes, n_envs, lstm, part, feature_ext = (
         args.read_path, 
         args.n_files, 
-        args.n_sequences, 
         args.n_episodes, 
-        args.device,
         args.n_envs,
         args.lstm,
-        args.tb_log,
-        args.checkpoint_freq,
+        args.part,
         args.feature_extractor,
-        args.window
     )
     
     read_path = os.path.join(
-        read_path,
+        'rl_ready_data_conv',
         f'files_used_{n_files}',
-        f'predicted_data.parquet'
+        f'window_{WINDOW}_{part}.parquet'
     )
-   
+    
+    logger.info(f'Reading data from {read_path}')
+
+    df = load_and_dedupe(read_path)
+    
     if not os.path.exists(read_path):
-        logger.info(f'Downloading data from {S3_BASELINE_PATH}/{read_path}') 
-        s3 = boto3.client('s3')
-        s3.download_file(
-            S3_BASELINE_PATH,     
-            read_path,
-            read_path
-        )
-             
+        raise ValueError(f'No data found at {read_path}')
+ 
     lstm = _lstm_loader(lstm)
+    
+    
     read_cols, out_features = (
         ALL_COLS + [lstm] if lstm else ALL_COLS,
         OUT_FEATURE_COLUMNS + [lstm] if lstm else OUT_FEATURE_COLUMNS
     )
-    
-    logger.info(f'Reading data from {read_path}')
-    
-    logger.info(f'Running exp with ')
-    logger.info(pformat(read_cols))
- 
-    df = pd.read_parquet(
-        f'{read_path}/files_used_{n_files}/predicted_data.parquet',
-        columns=read_cols
-    )
-
+     
     logger.info(f'Loaded data with shape {df.shape}')
-    logger.info(f'Setting up convolution over {window}T minutes')
-    df = setup_data_at_window(df, window)
-
-    citizen_science_vec =DummyVecEnv([lambda: CitizenScienceEnv(df, out_features, n_sequences) for i in range(n_envs)])
+    logger.info(f'Setting up convolution over {WINDOW}T minutes')
+ 
+    citizen_science_vec =DummyVecEnv([lambda: CitizenScienceEnv(df, out_features, N_SEQUENCES) for i in range(n_envs)])
     logger.info(f'Vectorized environments created')
     
     base_path = os.path.join(
         S3_BASELINE_PATH,
         'reinforcement_learning_incentives_3',
         f'n_files_{n_files}',
-        feature_ext + '_' + 'label' if lstm.startswith('continue') else lstm,
+        feature_ext + '_' + 'label' if lstm.startswith('continue') else feature_ext + f'_{lstm}',
         'results',
         exec_time,
     ) 
@@ -215,15 +131,14 @@ def main(args):
 
     logger.info(f'Creating callbacks, monitors and loggerss')
     callback_max_episodes = StopTrainingOnMaxEpisodes(max_episodes=n_episodes, verbose=1)
-    checkpoint_callback = CheckpointCallback(save_freq=check_freq // (n_envs // 2), save_path=checkpoint_dir, name_prefix='rl_model')
-    dist_callback = DistributionCallback()
-    DistributionCallback.tensorboard_setup(tensorboard_dir, tb_log)
-    callback_list = CallbackList([callback_max_episodes, dist_callback, checkpoint_callback])
+    checkpoint_callback = CheckpointCallback(save_freq=CHECKPOINT_FREQ// (n_envs // 2), save_path=checkpoint_dir, name_prefix='rl_model')
+    callback_list = CallbackList([callback_max_episodes, checkpoint_callback])
     monitor_train = VecMonitor(citizen_science_vec)
     
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     if feature_ext == 'cnn':
-        CustomConv1dFeatures.setup_sequences_features(n_sequences + 1, 21)
+        CustomConv1dFeatures.setup_sequences_features(N_SEQUENCES + 1,len(out_features))
         logger.info('Using custom 1 dimensional CNN feature extractor')
         policy_kwargs = dict(
             features_extractor_class=CustomConv1dFeatures,
@@ -246,7 +161,7 @@ def main(args):
         'n_episodes: {}'.format(n_episodes),
         'read_path: {}'.format(read_path),
         'n_files: {}'.format(n_files),
-        'n_sequences: {}'.format(n_sequences),
+        'n_sequences: {}'.format(N_SEQUENCES),
         'n_envs: {}'.format(n_envs),
         'total_timesteps: {}'.format(df.shape),
         'device: {}'.format(device),
@@ -254,7 +169,7 @@ def main(args):
         'checkpoint_dir: {}'.format(checkpoint_dir)
     ]))
     
-    model.learn(total_timesteps=10000, progress_bar=True, log_interval=1000, callback=callback_list)
+    model.learn(total_timesteps=10000, progress_bar=True, log_interval=TB_LOG, callback=callback_list)
     
 
 if __name__ == '__main__':

@@ -30,6 +30,7 @@ class CitizenScienceEnv(gym.Env):
         
         self.action_space = gym.spaces.Discrete(2)
         self.observation_space = gym.spaces.Box(low=-1, high=1, shape=(len(out_features), n_sequences + 1), dtype=np.float32)
+        self.episode_bins = []
 
     def reset(self):
         user_to_run, session_to_run = self.dataset.sample(1)[['user_id', 'session_30_raw']].values[0]
@@ -46,22 +47,22 @@ class CitizenScienceEnv(gym.Env):
         return metadata.to_dict()
 
     def step(self, action):
+        
         self._take_action(action)
-
         next_state, done, meta = self._calculate_next_state()
         
         if done:
             current_session_index = self.current_session_index if \
-                self.current_session_index != self.current_session.shape[0] else self.current_session_index - 1
+                self.current_session_index != self.current_session.shape[0] else self.current_session.shape[0] - 1
         
             self.metadata['ended'] = self.current_session.iloc[current_session_index]['cum_session_event_raw']
-            self.metadata['reward'] = self.reward
-            meta = self._row_to_dict(self.metadata)
-            return next_state, float(self.reward), done, meta
+            self.metadata['reward'] = self.current_session.iloc[current_session_index]['reward']
+            self.episode_bins.append(self._row_to_dict(self.metadata))
+            return next_state, float(self.reward), done, {}
         else:
             self.reward = self.current_session.iloc[self.current_session_index]['reward'] 
             self.current_session_index += 1        
-        return next_state, float(self.reward), done, meta
+            return next_state, float(self.reward), done, meta
     
     def _metadata(self):
         session_metadata = self.current_session.iloc[0][RL_STAT_COLS]
@@ -85,7 +86,7 @@ class CitizenScienceEnv(gym.Env):
     def _continuing_in_session(self):
         sim_counts = self.metadata['sim_size']
         current_session_count = self.current_session.iloc[self.current_session_index]['cum_session_event_raw']
-        if current_session_count <= sim_counts:
+        if current_session_count < sim_counts:
             return True
         
         extending_session = self._probability_extending_session(current_session_count)
@@ -111,14 +112,17 @@ class CitizenScienceEnv(gym.Env):
             (self.dataset['user_id'] == user_id) &
             (self.dataset['session_30_raw'] == session)
         ]
-   
-        return subset.sort_values(by=['date_time']).reset_index(drop=True)
+        
+        subset = subset.sort_values(by=['cum_session_event_raw']).reset_index(drop=True)
+        return subset
     
     def _take_action(self, action):
         if action == 0 or self.metadata['incentive_index'] > 0:
             return
         
-        current_session_index = min(self.current_session_index, self.current_session.shape[0] - 1)
+        current_session_index = self.current_session_index if \
+            self.current_session_index != self.current_session.shape[0] else self.current_session.shape[0] - 1
+        
         self.metadata['incentive_index'] = self.current_session.iloc[current_session_index]['cum_session_event_raw']
         self.metadata['incentive_time'] = self.current_session.iloc[current_session_index]['cum_session_time_raw']
         

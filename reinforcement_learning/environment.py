@@ -1,12 +1,13 @@
 import gym
 import numpy as np
-from rl_constant import RL_STAT_COLS
+from rl_constant import METADATA_COLS, RL_STAT_COLS
 from scipy.stats import norm
 
 import numpy as np
 from scipy.stats import norm 
 import gym
 from datetime import datetime
+from copy import deepcopy
 
 class CitizenScienceEnv(gym.Env):
     
@@ -31,9 +32,10 @@ class CitizenScienceEnv(gym.Env):
         self.observation_space = gym.spaces.Box(low=-1, high=1, shape=(len(out_features), n_sequences + 1), dtype=np.float32)
         self.evalution = evaluation
         self.episode_bins = []
+        self.exp_runs = 0
 
     def reset(self):
-        user_to_run, session_to_run = self.dataset.sample(1)[['user_id', 'session_30_raw']].values[0]
+        user_to_run, session_to_run = self.dataset.sample(1)[['user_id', 'session_30_count_raw']].values[0]
         self.current_session = self._get_events(user_to_run, session_to_run)
         self.metadata = self._metadata()
         self.current_session_index = 0
@@ -54,11 +56,15 @@ class CitizenScienceEnv(gym.Env):
         if done:
             current_session_index = self.current_session_index if \
                 self.current_session_index != self.current_session.shape[0] else self.current_session.shape[0] - 1
+            
+            self.exp_runs += 1
         
             self.metadata['ended'] = self.current_session.iloc[current_session_index]['cum_session_event_raw']
             self.metadata['reward'] = self.current_session.iloc[current_session_index]['reward']
-            if self.evalution:
-                self.episode_bins.append(self._row_to_dict(self.metadata))
+            self.metadata['session_exp_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.metadata['exp_runs'] = self.exp_runs
+            self.episode_bins.append(self._row_to_dict(self.metadata))
+            
             return next_state, float(self.reward), done, {}
         else:
             self.reward = self.current_session.iloc[self.current_session_index]['reward'] 
@@ -72,6 +78,11 @@ class CitizenScienceEnv(gym.Env):
         return session_metadata
     
     
+    def flush_episode_bins(self):
+        episode_bins = deepcopy(self.episode_bins)
+        self.episode_bins = []
+        return episode_bins
+    
     def _calculate_next_state(self):
         
         if (self.current_session_index == self.current_session.shape[0]):
@@ -81,9 +92,7 @@ class CitizenScienceEnv(gym.Env):
             return self._state(), False, {}
     
         return None, True, {}
-        
-      
-  
+         
     def _continuing_in_session(self):
         sim_counts = self.metadata['sim_size']
         current_session_count = self.current_session.iloc[self.current_session_index]['cum_session_event_raw']
@@ -111,10 +120,11 @@ class CitizenScienceEnv(gym.Env):
     def _get_events(self, user_id, session):
         subset = self.dataset[
             (self.dataset['user_id'] == user_id) &
-            (self.dataset['session_30_raw'] == session)
+            (self.dataset['session_30_count_raw'] == session)
         ]
         
-        subset = subset.sort_values(by=['cum_session_event_raw']).reset_index(drop=True)
+        
+        subset = subset.sort_values(by=['date_time'])
         return subset
     
     def _take_action(self, action):

@@ -1,35 +1,20 @@
-LABEL = [
-    "continue_work_session_30_minutes"
-]
+FEATURE_COLS = [
 
-METADATA = [
-    "user_id",
-    "session_30_raw",
-    "cum_platform_event_raw",
-    "cum_platform_time_raw",
-    "cum_session_time_raw",
-    "cum_session_event_raw",
-    "global_events_user",
-    "global_session_time",
-    "date_time",
-]
-
-OUT_FEATURE_COLUMNS = [
-    "country_count", 
-    "date_hour_sin", 
+    "country_count",
     "date_hour_cos",
-    "date_minute_sin",
+    "date_hour_sin",
     "date_minute_cos",
+    "date_minute_sin",
     
     "session_30_count",
     "session_5_count",
-    "cum_session_event_count",
-    "delta_last_event",
+    "cum_session_event",
+    "convolved_delta_event",
     "cum_session_time",
     
     "expanding_click_average",
     "cum_platform_time",
-    "cum_platform_events",
+    "cum_platform_event",
     "cum_projects",
     "average_event_time",
     
@@ -40,18 +25,33 @@ OUT_FEATURE_COLUMNS = [
     "previous_session_events",
 ]
 
-PREDICTION_COLS = [
-    'seq_10',
-    'sq_20'
+METADATA_COLS = [
+    "user_id",
+    "date_time",
+    "session_30_count_raw",
+    "cum_platform_event_raw",
+    "cum_platform_time_raw",
+    "cum_session_event_raw",
+    "global_events_user",
+    "global_session_time",
+    "reward",
+    "session_minutes",
+    "session_size",
+    "sim_minutes",
+    "sim_size",
+    "reward"
 ]
-
-
-GROUPBY_COLS = ['user_id']
 
 RL_STAT_COLS = [
     'session_size',
-    'sim_size',
     'session_minutes',
+    'sim_size',
     'sim_minutes',
-    'reward',
+    'global_session_time',
+
+]
+
+PREDICTION_COLS = [
+    "seq_40",
+    "label"
 ]

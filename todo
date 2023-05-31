@@ -1,9 +1,34 @@
+review columns and only propagate ones that are needed
 
-re-establish training data 
-rerun rl experiments on training data 
+setup rl experiment local
+    GPU
+    MLP
 
-review 
-    results per bin
+scale experiments to GPU
+    CNN label
+    CNN seq_40
+    CNN none
+
+    MLP label
+    MLP seq_40
+    MLP none
+
+get evaluation results
+    CNN label
+    CNN seq_40
+    CNN none
+
+writeup evaluation results basic
+
+writeup evaluation results 
+    by engagement bin
     dispersion
     detrending
+    linear regression
 
+include:
+    reference to incentive 
+        CNN label
+        CNN seq_40
+        CNN none
+        

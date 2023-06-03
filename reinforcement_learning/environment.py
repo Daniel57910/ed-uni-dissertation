@@ -94,12 +94,12 @@ class CitizenScienceEnv(gym.Env):
         return None, True, {}
          
     def _continuing_in_session(self):
-        sim_counts = self.metadata['sim_size']
-        current_session_count = self.current_session.iloc[self.current_session_index]['cum_session_event_raw']
-        if current_session_count < sim_counts:
+        sim_minutes = self.current_session.iloc[self.current_session_index]['sim_minutes']
+        current_session_minutes = self.current_session.iloc[self.current_session_index]['cum_session_time_raw']
+        if current_session_minutes < sim_minutes:
             return True
         
-        extending_session = self._probability_extending_session(current_session_count)
+        extending_session = self._probability_extending_session(current_session_minutes)
         
         return all([extending_session >= .3, extending_session <= .7])
         
@@ -108,9 +108,9 @@ class CitizenScienceEnv(gym.Env):
         if self.metadata['incentive_index'] == 0:
             return 0
         
-        scale = max(5, int(self.metadata['session_size'] / 4))
+        scale = max(5, int(self.metadata['session_minutes'] / 5))
         continue_session = norm(
-            loc=self.metadata['incentive_index'],
+            loc=self.metadata['incentive_time'],
             scale=scale
         ).cdf(current_session_count)
         
@@ -123,7 +123,7 @@ class CitizenScienceEnv(gym.Env):
             (self.dataset['session_30_count_raw'] == session)
         ]
         
-        
+        subset = deepcopy(subset) 
         subset = subset.sort_values(by=['date_time'])
         return subset
     

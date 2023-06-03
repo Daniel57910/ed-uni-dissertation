@@ -1,3 +1,4 @@
+# %load rl_constant.py
 FEATURE_COLS = [
 
     "country_count",
@@ -26,20 +27,17 @@ FEATURE_COLS = [
 ]
 
 METADATA_COLS = [
+    
     "user_id",
     "date_time",
     "session_30_count_raw",
-    "cum_platform_event_raw",
-    "cum_platform_time_raw",
     "cum_session_event_raw",
-    "global_events_user",
-    "global_session_time",
+    "cum_session_time_raw",
     "reward",
     "session_minutes",
     "session_size",
     "sim_minutes",
     "sim_size",
-    "reward"
 ]
 
 RL_STAT_COLS = [
@@ -47,7 +45,6 @@ RL_STAT_COLS = [
     'session_minutes',
     'sim_size',
     'sim_minutes',
-    'global_session_time',
 
 ]
 
@@ -55,3 +52,5 @@ PREDICTION_COLS = [
     "seq_40",
     "label"
 ]
+
+LOAD_COLS = list(set(FEATURE_COLS + METADATA_COLS + RL_STAT_COLS + PREDICTION_COLS))

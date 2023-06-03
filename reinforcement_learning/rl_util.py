@@ -1,86 +1,49 @@
-import pandas as pd
+import os
 import logging
-from rl_constant import LABEL, METADATA, OUT_FEATURE_COLUMNS, PREDICTION_COLS, RL_STAT_COLS
-
 global logger
-logger = logging.getLogger('rl_results_eval')
-from functools import reduce
-from pprint import pformat
 
-def remove_events_in_minute_window(df):
-    df['second_window'] = df['second'] // 10
-    df = df.drop_duplicates(
-        subset=['user_id', 'session_30_raw', 'year', 'month', 'day', 'hour', 'minute'],
-        keep='last'
-    ).reset_index(drop=True)
-
-    return df
-
+logger = logging.getLogger(__name__)
+import numpy as np
+from pqdm.processes import pqdm
 import pdb
-def convolve_delta_events(df, window):
+
+def download_dataset_from_s3(client, base_read_path, full_read_path):
+    logger.info(f'Downloading data from {base_read_path}')
+    os.makedirs(base_read_path, exist_ok=True)
     
-    before_resample = df.shape
-    df['convolved_delta_event'] = (
-        df.set_index('date_time').groupby(by=['user_id', 'session_30_raw'], group_keys=False) \
-            .rolling(f'{window}T', min_periods=1)['delta_last_event'] \
-            .mean()
-            .reset_index(name='convolved_event_delta')['convolved_event_delta']
+    logger.info(f'Downloading data from dissertation-data-dmiller/{full_read_path}')
+    client.download_file(
+        'dissertation-data-dmiller',
+        full_read_path,
+        full_read_path
     )
-
-    df['delta_last_event'] = df['convolved_delta_event']
-    
-    logger.info(f'Convolution complete: resampling with max at {window} minute intervals')
-    sampled_events = df.sort_values(by=['date_time']) \
-        .set_index('date_time') \
-        .groupby(['user_id', 'session_30_raw']) \
-        .resample(f'{window}Min')['cum_platform_event_raw'] \
-        .max() \
-        .drop(columns=['user_id', 'session_30_raw']) \
-        .reset_index() \
-        .dropna()
-    
-    logger.info(f'Resampling complete: {before_resample} -> {sampled_events.shape}')
-    logger.info(f'Joining back to original df')
-    
-    sampled_events = sampled_events[['user_id', 'cum_platform_event_raw']]
-    resampled_df = sampled_events.set_index(['user_id', 'cum_platform_event_raw']) \
-        .join(df.set_index(['user_id', 'cum_platform_event_raw']), 
-        how='inner'
-    ) \
-    .reset_index()
+    logger.info(f'Downloaded data from dissertation-data-dmiller/{full_read_path}')
     
 
-    logger.info(f'Joining complete: {resampled_df.shape}')
-    return resampled_df
+def _parralel_partition_users(unique_sessions, df, index, vec_df_path):
+    subset_session = df.merge(unique_sessions, on=['user_id', 'session_30_count_raw'], how='inner')
+    subset_session.to_parquet(f'{vec_df_path}/batch_{index}.parquet')
+    return subset_session.copy().reset_index(drop=True)
     
 
+def batch_environments_for_vectorization(df, n_envs, vec_df_path):
+   
+    df[['user_id', 'session_30_count_raw']] = df[['user_id', 'session_30_count_raw']].astype(int)
+   
+    unique_sessions = df[['user_id', 'session_30_count_raw']].drop_duplicates().sample(frac=1).reset_index(drop=True)
+    logger.info(f'Unique sessions shape: {unique_sessions.shape}. Splitting into {n_envs} environments')
+    unique_session_split = np.array_split(unique_sessions, n_envs)
+    
+    unique_session_args = [{
+        'unique_sessions': sess,
+        'df': df,
+        'index': i,
+        'vec_df_path': vec_df_path,
+    } for i, sess in enumerate(unique_session_split)]
 
-def generate_metadata(dataset):
+    logger.info(f'Environments split: running parralel partitioning')
+    result = pqdm(unique_session_args, _parralel_partition_users, n_jobs=os.cpu_count(), argument_type='kwargs')
+    logger.info(f'Environments split: finished parralel partitioning')
+    return result
+        
     
-    session_size = dataset.groupby(['user_id', 'session_30_raw'])['size_of_session'].max().reset_index(name='session_size')
-    session_minutes = dataset.groupby(['user_id', 'session_30_raw'])['cum_session_time_raw'].max().reset_index(name='session_minutes')
-    
-    sim_minutes = dataset.groupby(['user_id', 'session_30_raw'])['cum_session_time_raw'].quantile(.7, interpolation='nearest').reset_index(name='sim_minutes')
-    sim_size = dataset.groupby(['user_id', 'session_30_raw'])['cum_session_event_raw'].quantile(.7, interpolation='nearest').reset_index(name='sim_size')
-    
-    
-    sessions = [session_size, session_minutes, sim_minutes, sim_size]
-    sessions = reduce(lambda left, right: pd.merge(left, right, on=['user_id', 'session_30_raw']), sessions)
-    dataset = pd.merge(dataset, sessions, on=['user_id', 'session_30_raw'])
-    dataset['reward'] = dataset['cum_session_time_raw']
-    return dataset
-
-
-
-def setup_data_at_window(df, window):
-    df['date_time'] = pd.to_datetime(df[['year', 'month', 'day', 'hour', 'minute', 'second']], errors='coerce')
-    size_of_session = df.groupby(['user_id', 'session_30_raw']).size().reset_index(name='size_of_session')
-    df = pd.merge(df, size_of_session, on=['user_id', 'session_30_raw'])
-    df['cum_session_event_raw'] = df.groupby(['user_id', 'session_30_raw'])['date_time'].cumcount() + 1
-    
-    logger.info(f'Convolution over {window} minute window')
-    df = convolve_delta_events(df, window)
-    logger.info(f'Convolving over {window} minute window complete: generating metadata')
-    df = generate_metadata(df) 
-    logger.info(f'Generating metadata complete')
-    return df

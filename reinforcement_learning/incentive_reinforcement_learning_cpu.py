@@ -19,6 +19,8 @@ from rl_constant import (
     PREDICTION_COLS
     
 )
+
+from rl_util import download_dataset_from_s3, batch_environments_for_vectorization
 from stable_baselines3 import A2C, DQN, PPO
 from stable_baselines3.common.callbacks import (CallbackList,
                                                 CheckpointCallback,
@@ -26,7 +28,6 @@ from stable_baselines3.common.callbacks import (CallbackList,
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 from stable_baselines3.dqn.policies import DQNPolicy
-
 
 
 logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p', level=logging.INFO)
@@ -51,32 +52,20 @@ WINDOW = 2
 def parse_args():
     parse = argparse.ArgumentParser()
     parse.add_argument('--read_path', type=str, default='rl_ready_data_conv')
-    parse.add_argument('--n_files', type=int, default=30)
+    parse.add_argument('--n_files', type=int, default=2)
     parse.add_argument('--n_episodes', type=int, default=50)
     parse.add_argument('--n_envs', type=int, default=100)
-    parse.add_argument('--lstm', type=str, default='seq_40')
+    parse.add_argument('--lstm', type=str, default='label')
     parse.add_argument('--part', type=str, default='train')
     parse.add_argument('--feature_extractor', type=str, default='cnn') 
     args = parse.parse_args()
     return args
 
 
-def load_and_dedupe(read_path, cols=None):
-    df = pd.read_parquet(read_path)
-    return df
-
-def download_dataset_from_s3(client, base_read_path, full_read_path):
-    logger.info(f'Downloading data from {base_read_path}')
-    os.makedirs(base_read_path, exist_ok=True)
+def load_and_dedupe(read_path, cols):
     
-    logger.info(f'Downloading data from dissertation-data-dmiller/{full_read_path}')
-    client.download_file(
-        'dissertation-data-dmiller',
-        full_read_path,
-        full_read_path
-    )
-    logger.info(f'Downloaded data from dissertation-data-dmiller/{full_read_path}')
-
+    df = pd.read_parquet(read_path, columns=cols)
+    return df
 
 def main(args):
     
@@ -97,21 +86,36 @@ def main(args):
 
     base_read_path = os.path.join('rl_ready_data_conv', f'files_used_{n_files}')
     full_read_path = os.path.join(base_read_path, f'window_{WINDOW}_{part}.parquet')
+    vec_df_path = os.path.join(base_read_path, f'window_{WINDOW}_{part}_batched')
+    load_cols = FEATURE_COLS + METADATA_COLS + PREDICTION_COLS
+
     if not os.path.exists(full_read_path):
         client = boto3.client('s3')
-        download_dataset_from_s3(client, n_files, base_read_path, full_read_path)
+        download_dataset_from_s3(client,  base_read_path, full_read_path)
         
-    load_cols = FEATURE_COLS + METADATA_COLS + PREDICTION_COLS
+    if not os.path.exists(vec_df_path):
+        df = load_and_dedupe(full_read_path, cols=load_cols)
+        df = df.sort_values(['date_time', 'user_id'])
+        logger.info(f'Loaded data with shape {df.shape}')
+        os.makedirs(vec_df_path, exist_ok=True)
+        logger.info(f'Writing vectorized data to {vec_df_path}')
+        batch_environments_for_vectorization(df, n_envs, vec_df_path)
+        logger.info(f'Vectorized environments created')
+        del df
+
+    logger.info(f'Loading vectorized data from {vec_df_path}')
+    vectorized_df = [
+        pd.read_parquet(os.path.join(vec_df_path, f'batch_{i}.parquet'))
+        for i in range(n_envs)
+    ]
+    
     out_features = FEATURE_COLS + ([lstm] if lstm else None)
-    logger.info(f'Reading data from {full_read_path}')
-
-    df = load_and_dedupe(full_read_path, cols=load_cols)
-    df['date_time'] = pd.to_datetime(df['date_time'])
-    df = df.sort_values(['date_time', 'user_id'])
-    logger.info(f'Loaded data with shape {df.shape}')
 
 
-    citizen_science_vec =DummyVecEnv([lambda: CitizenScienceEnv(df, out_features, N_SEQUENCES) for i in range(n_envs)])
+
+    citizen_science_vec =DummyVecEnv([lambda: CitizenScienceEnv(vec_df, out_features, N_SEQUENCES) for vec_df in vectorized_df])
+    monitor_train = VecMonitor(citizen_science_vec)
+    
     logger.info(f'Vectorized environments created')
     
     base_path = os.path.join(
@@ -123,13 +127,12 @@ def main(args):
         exec_time,
     ) 
     
-    
     tensorboard_dir, checkpoint_dir = (
         os.path.join(base_path, 'training_metrics'),
         os.path.join(base_path, 'checkpoints')
     )
 
-    write_dir = tensorboard_dir.split('s3://dissertation-data-dmiller/')[1]
+    write_dir = tensorboard_dir
     
     if not os.path.exists(write_dir):
         logger.info(f'Creating directory {write_dir} for tensorboard logs')
@@ -139,11 +142,10 @@ def main(args):
     callback_max_episodes = StopTrainingOnMaxEpisodes(max_episodes=n_episodes, verbose=1)
     checkpoint_callback = CheckpointCallback(save_freq=CHECKPOINT_FREQ// (n_envs // 2), save_path=checkpoint_dir, name_prefix='rl_model')
     
-    DistributionCallback.tensorboard_setup(write_dir, 10)
+    DistributionCallback.tensorboard_setup(write_dir, TB_LOG)
     logger_callback = DistributionCallback()
     
     callback_list = CallbackList([callback_max_episodes, checkpoint_callback, logger_callback])
-    monitor_train = VecMonitor(citizen_science_vec)
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
@@ -165,7 +167,6 @@ def main(args):
         
     logger.info(f'Beginning training') 
     
-    # retutrn
             
     logger.info(pformat([
         'n_episodes: {}'.format(n_episodes),
@@ -173,7 +174,6 @@ def main(args):
         'n_files: {}'.format(n_files),
         'n_sequences: {}'.format(N_SEQUENCES),
         'n_envs: {}'.format(n_envs),
-        'total_timesteps: {}'.format(df.shape),
         'device: {}'.format(device),
         'lstm: {}'.format(lstm),
         'part: {}'.format(part),
@@ -185,8 +185,15 @@ def main(args):
     
     model.learn(total_timesteps=10000, progress_bar=True, log_interval=TB_LOG, callback=callback_list)
     
+    info_container = monitor_train.get_attr('episode_bins')
+    info_container = [i for sublist in info_container for i in sublist]
+    info_df = pd.DataFrame(info_container)
+    info_df.to_csv("test_experiment.csv")
+    
+    print(info_df.head(10))
+
 
 if __name__ == '__main__':
     args = parse_args()
     
-    main(args) 
+    main(args)

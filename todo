@@ -1,34 +1,15 @@
-review columns and only propagate ones that are needed
-
-setup rl experiment local
-    GPU
-    MLP
-
-scale experiments to GPU
-    CNN label
-    CNN seq_40
-    CNN none
-
-    MLP label
-    MLP seq_40
-    MLP none
-
 get evaluation results
     CNN label
     CNN seq_40
     CNN none
 
-writeup evaluation results basic
+run with incentive index:
+    CNN seq_40
+    CNN label
+    
+results:
+    create hp function
+    hp_filter on losses
+    hp_filter on rewards
 
-writeup evaluation results 
-    by engagement bin
-    dispersion
-    detrending
-    linear regression
 
-include:
-    reference to incentive 
-        CNN label
-        CNN seq_40
-        CNN none
-        

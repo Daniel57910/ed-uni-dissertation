@@ -1,10 +1,9 @@
-import numpy as np
+# %load callback
 import pandas as pd
-from rl_constant import RL_STAT_COLS
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.logger import TensorBoardOutputFormat
 from datetime import datetime
-import os
+
 class DistributionCallback(BaseCallback):
     
     @classmethod
@@ -12,9 +11,6 @@ class DistributionCallback(BaseCallback):
         cls._log_dir = log_dir
         cls._log_freq = log_freq
 
-    def _on_training_start(self) -> None:
-        output_formats = self.logger.output_formats
-        self.tb_formatter = next(f for f in output_formats if isinstance(f, TensorBoardOutputFormat))
     
     def _on_step(self) -> bool:
         if self.n_calls % self._log_freq == 0:
@@ -51,15 +47,12 @@ class DistributionCallback(BaseCallback):
                 'reward': reward,
                 'inc_time': inc_time   
             }
-            self.tb_formatter.writer.add_scalars('size_stats', size_stats, self.n_calls // self._log_freq)
-            self.tb_formatter.writer.add_scalars('time_stats', time_stats, self.n_calls // self._log_freq)
             
-            self.tb_formatter.writer.flush()
+            for key, value in size_stats.items():
+                self.logger.record(f'size/{key}', value)
             
-            current_time = datetime.now().strftime("%Y%m%d-%H%M%S")
-            
+            for key, value in time_stats.items():
+                self.logger.record(f'time/{key}', value)
 
-            current_time = datetime.now().strftime("%Y_%m_%d-%H_%M_%S")
-            values_df.to_parquet(f'{self._log_dir}/dist_{self.n_calls // self._log_freq}_{current_time}.parquet')
             
         return True

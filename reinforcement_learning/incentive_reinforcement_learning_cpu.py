@@ -69,6 +69,10 @@ def parse_args():
 
 def main(args):
     
+    df = pd.read_csv('experiments/dqn_label_cnn/2023-06-05_10-39-12/training_metrics/1.csv')
+    print(df.head())
+    return
+    
     
     logger.info('Starting Incentive Reinforcement Learning')
     logger.info(pformat(args.__dict__))

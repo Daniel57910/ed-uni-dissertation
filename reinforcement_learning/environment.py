@@ -1,14 +1,13 @@
-# %load environment
 import gym
 import numpy as np
 from scipy.stats import norm
-
 import numpy as np
 from scipy.stats import norm 
 import gym
 from datetime import datetime
 from copy import deepcopy
 from rl_constant import RL_STAT_COLS
+MAX_EVAL_SIZE = 75
 class CitizenScienceEnv(gym.Env):
     
     metadata = {'render.modes': ['human']}
@@ -29,14 +28,16 @@ class CitizenScienceEnv(gym.Env):
         self.n_sequences = n_sequences
         self.out_features = out_features
         
-        self.action_space = gym.spaces.Discrete(2)
+        self.action_space = gym.spaces.Discrete(4)
         self.observation_space = gym.spaces.Box(low=-1, high=1, shape=(len(out_features), n_sequences + 1), dtype=np.float32)
         self.evalution = evaluation
         self.episode_bins = []
         self.exp_runs = 0
 
     def reset(self):
-        user_to_run, session_to_run = self.unique_sessions.sample().values[0]
+        random_session = np.random.randint(0, self.unique_sessions.shape[0])
+        
+        user_to_run, session_to_run = self.unique_sessions.iloc[random_session][['user_id', 'session_30_count_raw']]
         self.current_session = self._get_events(user_to_run, session_to_run)
         self.metadata = self._metadata()
         self.current_session_index = 0
@@ -72,11 +73,13 @@ class CitizenScienceEnv(gym.Env):
             return next_state, float(self.reward), done, meta
     
     def _metadata(self):
-        session_metadata = self.current_session.iloc[0][RL_STAT_COLS]
+        session_metadata = self.current_session.iloc[0][RL_STAT_COLS].copy()
         session_metadata['ended'] = 0
-        session_metadata['incentive_index'] = 0
+        for meta_col in ['small', 'medium', 'large']:
+            session_metadata[f'inc_{meta_col}'] = 0
+            session_metadata[f'time_{meta_col}'] = 0
+
         return session_metadata
-    
     
     def flush_episode_bins(self):
         episode_bins = self.episode_bins.copy()
@@ -95,24 +98,36 @@ class CitizenScienceEnv(gym.Env):
          
     def _continuing_in_session(self):
         time_cutoff = self.current_session.iloc[self.current_session_index]['time_cutoff']
-        current_session_minutes = self.current_session.iloc[self.current_session_index]['cum_session_time_raw']
-        if current_session_minutes < time_cutoff:
+        current_session_time = self.current_session.iloc[self.current_session_index]['cum_session_time_raw']
+        if current_session_time <= time_cutoff or current_session_time >= MAX_EVAL_SIZE:
             return True
-        
-        extending_session = self._probability_extending_session(current_session_minutes)
-        
-        return all([extending_session >= .3, extending_session <= .7])
-        
     
-    def _probability_extending_session(self, current_session_count):
-        if self.metadata['incentive_index'] == 0:
-            return 0
+        extending_low = self._probability_extending(current_session_time, self.metadata['time_small']) + \
+            np.random.uniform(-0.1, 0, 100).mean()
+            
         
-        scale = max(5, int(self.metadata['session_minutes'] / 5))
+        extending_medium = self._probability_extending(current_session_time, self.metadata['time_medium']) + \
+            np.random.uniform(-.15, -.05, 100).mean()
+            
+        extending_large = self._probability_extending(current_session_time, self.metadata['time_large']) + \
+            np.random.uniform(-0.25, -.15, 100).mean()
+            
+        return any([
+            extending_low > 0.4 and extending_low <= 0.75,
+            extending_medium > 0.4 and extending_medium <= 0.75,
+            extending_large > 0.4 and extending_large <= 0.75
+        ])
+        
+           
+    
+    def _probability_extending(self, current_session_time, incentive_time):
+        if incentive_time == 0:
+            return 0
+         
         continue_session = norm(
-            loc=self.metadata['incentive_time'],
-            scale=scale
-        ).cdf(current_session_count)
+            loc=max(incentive_time, 1),
+            scale=max(incentive_time *.75, 1)
+        ).cdf(max(current_session_time, 1)) 
         
         return continue_session
         
@@ -127,15 +142,31 @@ class CitizenScienceEnv(gym.Env):
         return subset
     
     def _take_action(self, action):
-        if action == 0 or self.metadata['incentive_index'] > 0:
+        if action == 0:
             return
         
-        current_session_index = self.current_session_index if \
-            self.current_session_index != self.current_session.shape[0] else self.current_session.shape[0] - 1
+        if action == 1 and self.metadata['inc_small'] == 0:
+            current_session_index = self.current_session_index if \
+                self.current_session_index != self.current_session.shape[0] else self.current_session.shape[0] - 1
         
-        self.metadata['incentive_index'] = self.current_session.iloc[current_session_index]['cum_session_event_raw']
-        self.metadata['incentive_time'] = self.current_session.iloc[current_session_index]['cum_session_time_raw']
+            self.metadata['inc_small'] = self.current_session.iloc[current_session_index]['cum_session_event_raw']
+            self.metadata['time_small'] = self.current_session.iloc[current_session_index]['cum_session_time_raw']
+            
+        if action == 2 and all([(self.metadata['inc_small'] > 0), (self.metadata['inc_medium'] == 0)]):
+            current_session_index = self.current_session_index if \
+                self.current_session_index != self.current_session.shape[0] else self.current_session.shape[0] - 1
+            
+            self.metadata['inc_medium'] = self.current_session.iloc[current_session_index]['cum_session_event_raw']
+            self.metadata['time_medium'] = self.current_session.iloc[current_session_index]['cum_session_time_raw']
+            
+        if action == 3 and all([(self.metadata['inc_small'] > 0), (self.metadata['inc_medium'] > 0), (self.metadata['inc_large'] == 0)]):
+            current_session_index = self.current_session_index if \
+                self.current_session_index != self.current_session.shape[0] else self.current_session.shape[0] - 1
+            
+            self.metadata['inc_large'] = self.current_session.iloc[current_session_index]['cum_session_event_raw']
+            self.metadata['time_large'] = self.current_session.iloc[current_session_index]['cum_session_time_raw']
         
+
     def _state(self):
 
         if self.current_session_index > self.n_sequences:

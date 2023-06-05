@@ -1,5 +1,4 @@
-# %load rl_constant.py
-# %load rl_constant.py
+
 FEATURE_COLUMNS = [
     "country_count", 
     "date_hour_sin", 

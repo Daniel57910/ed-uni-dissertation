@@ -1,4 +1,3 @@
-# %load incentive_reinforcement_learning_cpu.py
 import argparse
 import logging
 import os
@@ -49,15 +48,34 @@ logger.setLevel(logging.INFO)
 
 S3_BASELINE_PATH = 's3://dissertation-data-dmiller/'
 N_SEQUENCES = 40
-CHECKPOINT_FREQ = 250_000
+CHECKPOINT_FREQ = 750_000
 TB_LOG = 10_000
 WINDOW = 1
+
+def linear_schedule(initial_value: float) -> Callable[[float], float]:
+    """
+    Linear learning rate schedule.
+
+    :param initial_value: Initial learning rate.
+    :return: schedule that computes
+      current learning rate depending on remaining progress
+    """
+    def func(progress_remaining: float) -> float:
+        """
+        Progress will decrease from 1 (beginning) to 0.
+
+        :param progress_remaining:
+        :return: current learning rate
+        """
+        return progress_remaining * initial_value
+
+    return func
 
 def parse_args():
     parse = argparse.ArgumentParser()
     parse.add_argument('--read_path', type=str, default='rl_ready_data_conv')
     parse.add_argument('--n_files', type=int, default=2)
-    parse.add_argument('--n_episodes', type=int, default=50)
+    parse.add_argument('--n_episodes', type=int, default=10_000)
     parse.add_argument('--n_envs', type=int, default=100)
     parse.add_argument('--lstm', type=str, default='label')
     parse.add_argument('--part', type=str, default='train')
@@ -68,11 +86,7 @@ def parse_args():
 
 
 def main(args):
-    
-    df = pd.read_csv('experiments/dqn_label_cnn/2023-06-05_10-39-12/training_metrics/1.csv')
-    print(df.head())
-    return
-    
+   
     
     logger.info('Starting Incentive Reinforcement Learning')
     logger.info(pformat(args.__dict__))
@@ -98,10 +112,12 @@ def main(args):
         pd.read_parquet(read_path, columns=LOAD_COLS)
         for file in files
     ]
+    
+    vectorized_df += [d.copy() for d in vectorized_df]
+
 
     out_features = FEATURE_COLUMNS + [lstm] if lstm else FEATURE_COLUMNS
     logger.info(f'Out features: {out_features}')
-    environment = CitizenScienceEnv(vectorized_df[0], out_features, N_SEQUENCES)
 
     citizen_science_vec =DummyVecEnv([lambda: CitizenScienceEnv(vec_df, out_features, N_SEQUENCES) for vec_df in vectorized_df])
     monitor_train = VecMonitor(citizen_science_vec)
@@ -125,15 +141,15 @@ def main(args):
         os.makedirs(checkpoint_dir) 
 
     callback_max_episodes = StopTrainingOnMaxEpisodes(max_episodes=n_episodes, verbose=1)
-    checkpoint_freq = int(CHECKPOINT_FREQ // n_envs)
-    log_freq = int(TB_LOG // n_envs)
+    checkpoint_freq = int(CHECKPOINT_FREQ // (n_envs // 8))
+    log_freq = int(TB_LOG // (n_envs // 4))
     checkpoint_callback = CheckpointCallback(
         save_freq=checkpoint_freq,
         save_path=checkpoint_dir, 
         verbose=2
     )
     
-    DistributionCallback.tensorboard_setup(tensorboard_dir, TB_LOG // n_envs * 2) 
+    DistributionCallback.tensorboard_setup(tensorboard_dir, TB_LOG // (n_envs // 8))
     logger_callback = DistributionCallback()
     
     callback_list = CallbackList([checkpoint_callback, logger_callback, callback_max_episodes])
@@ -147,7 +163,14 @@ def main(args):
             features_extractor_class=CustomConv1dFeatures,
             net_arch=[10]
         )
-        model = DQN(policy='CnnPolicy', env=monitor_train, verbose=1, tensorboard_log=tensorboard_dir, policy_kwargs=policy_kwargs, device=device, stats_window_size=1000)
+        model = DQN(
+            policy='CnnPolicy', 
+            env=monitor_train, 
+            verbose=1, 
+            tensorboard_log=tensorboard_dir, 
+            policy_kwargs=policy_kwargs, 
+            device=device, 
+            stats_window_size=1000)
     else:
         logger.info('Using default MLP feature extractor')
         model = DQN(policy='MlpPolicy', env=monitor_train, verbose=1, tensorboard_log=tensorboard_dir, device=device, stats_window_size=1000)
@@ -175,7 +198,7 @@ def main(args):
         'tb_freq: {}'.format(log_freq),
     ]))
     
-    model.learn(total_timesteps=25_00, progress_bar=True, log_interval=log_freq, callback=callback_list)
+    model.learn(total_timesteps=1_000_000, progress_bar=True, log_interval=log_freq, callback=callback_list)
     
 if __name__ == '__main__':
     args = parse_args()

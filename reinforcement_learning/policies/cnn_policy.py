@@ -1,4 +1,3 @@
-# %load policies/cnn_policy
 from typing import Dict, List, Type, Union
 
 import gym

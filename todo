@@ -1,10 +1,4 @@
 
-sort out data with 50% window
-    - all data processed in one block
-    - train partition scaled; evaluated scaled using same scaler
-    - batches created and written to disk for train and evaluation
-
-sort out iterating through non completed sessions then resetting
 sort out writing statistics to csv 
 
 Q1:

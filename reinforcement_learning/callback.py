@@ -1,4 +1,5 @@
 # %load callback
+# %load callback
 import pandas as pd
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.logger import TensorBoardOutputFormat
@@ -22,29 +23,29 @@ class DistributionCallback(BaseCallback):
             )
             
             
-            session_size, sim_size, session_minutes, sim_minutes, ended, reward, inc_time, inc_index = (
+            session_size, size_cutoff, session_minutes, time_cutoff, ended_event, ended_time, inc_time, inc_index = (
                 values_df['session_size'].mean(),
-                values_df['sim_size'].mean(),
+                values_df['size_cutoff'].mean(),
                 values_df['session_minutes'].mean(),
-                values_df['sim_minutes'].mean(),
-                values_df['ended'].mean(),
-                values_df['reward'].mean(),
+                values_df['time_cutoff'].mean(),
+                values_df['ended_event'].mean(),
+                values_df['ended_time'].mean(),
                 values_df['incentive_time'].mean(),
                 values_df['incentive_index'].mean()
             )
             
             size_stats = {
                 'session_size': session_size,
-                'sim_size': sim_size,
-                'ended': ended,
+                'size_cutoff': size_cutoff,
+                'ended_size': ended_event,
                 'inc_index': inc_index
             }
             
             
             time_stats = {
                 'session_minutes': session_minutes,
-                'sim_minutes': sim_minutes,
-                'reward': reward,
+                'sim_minutes': time_cutoff,
+                'ended_time': ended_time,
                 'inc_time': inc_time   
             }
             
@@ -52,7 +53,8 @@ class DistributionCallback(BaseCallback):
                 self.logger.record(f'size/{key}', value)
             
             for key, value in time_stats.items():
-                self.logger.record(f'time/{key}', value)
-
+                self.logger.record(f'sess_time/{key}', value)
+                
+            values_df.to_csv(f'{self._log_dir}/{self.n_calls // self._log_freq}.csv')
             
         return True

@@ -1,3 +1,4 @@
+# %load incentive_reinforcement_learning_cpu.py
 import argparse
 import logging
 import os
@@ -10,17 +11,8 @@ import random
 import numpy as np
 import pandas as pd
 import torch
-from callback import DistributionCallback
-from environment import CitizenScienceEnv
-from policies.cnn_policy import CustomConv1dFeatures
-from rl_constant import (
-    FEATURE_COLS,
-    METADATA_COLS,
-    PREDICTION_COLS
-    
-)
 
-from rl_util import download_dataset_from_s3, batch_environments_for_vectorization
+
 from stable_baselines3 import A2C, DQN, PPO
 from stable_baselines3.common.callbacks import (CallbackList,
                                                 CheckpointCallback,
@@ -28,6 +20,18 @@ from stable_baselines3.common.callbacks import (CallbackList,
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 from stable_baselines3.dqn.policies import DQNPolicy
+
+from rl_constant import (
+    FEATURE_COLUMNS,
+    METADATA,
+    RL_STAT_COLS,
+    PREDICTION_COLS,
+    LOAD_COLS
+)
+
+from environment import CitizenScienceEnv
+from callback import DistributionCallback
+from policies.cnn_policy import CustomConv1dFeatures
 
 
 logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p', level=logging.INFO)
@@ -43,11 +47,11 @@ global logger
 logger = logging.getLogger('rl_exp_train')
 logger.setLevel(logging.INFO)
 
-S3_BASELINE_PATH = 's3://dissertation-data-dmiller'
+S3_BASELINE_PATH = 's3://dissertation-data-dmiller/'
 N_SEQUENCES = 40
-CHECKPOINT_FREQ = 100_000
+CHECKPOINT_FREQ = 250_000
 TB_LOG = 10_000
-WINDOW = 2
+WINDOW = 1
 
 def parse_args():
     parse = argparse.ArgumentParser()
@@ -62,10 +66,6 @@ def parse_args():
     return args
 
 
-def load_and_dedupe(read_path, cols):
-    
-    df = pd.read_parquet(read_path, columns=cols)
-    return df
 
 def main(args):
     
@@ -84,68 +84,55 @@ def main(args):
         args.feature_extractor,
     )
 
-    base_read_path = os.path.join('rl_ready_data_conv', f'files_used_{n_files}')
-    full_read_path = os.path.join(base_read_path, f'window_{WINDOW}_{part}.parquet')
-    vec_df_path = os.path.join(base_read_path, f'window_{WINDOW}_{part}_batched')
-    load_cols = FEATURE_COLS + METADATA_COLS + PREDICTION_COLS
+    base_read_path = os.path.join(read_path, f'files_used_{n_files}', f'window_{WINDOW}', f'batched_{part}')
+    logger.info(f'Reading data from {base_read_path}')
+    files= os.listdir(base_read_path)
+    logger.info(f'Files found: {len(files)} for environment vectorization')
 
-    if not os.path.exists(full_read_path):
-        client = boto3.client('s3')
-        download_dataset_from_s3(client,  base_read_path, full_read_path)
-        
-    if not os.path.exists(vec_df_path):
-        df = load_and_dedupe(full_read_path, cols=load_cols)
-        df = df.sort_values(['date_time', 'user_id'])
-        logger.info(f'Loaded data with shape {df.shape}')
-        os.makedirs(vec_df_path, exist_ok=True)
-        logger.info(f'Writing vectorized data to {vec_df_path}')
-        batch_environments_for_vectorization(df, n_envs, vec_df_path)
-        logger.info(f'Vectorized environments created')
-        del df
 
-    logger.info(f'Loading vectorized data from {vec_df_path}')
     vectorized_df = [
-        pd.read_parquet(os.path.join(vec_df_path, f'batch_{i}.parquet'))
-        for i in range(n_envs)
+        pd.read_parquet(read_path, columns=LOAD_COLS)
+        for file in files
     ]
-    
-    out_features = FEATURE_COLS + ([lstm] if lstm else None)
 
-
+    out_features = FEATURE_COLUMNS + [lstm] if lstm else FEATURE_COLUMNS
+    logger.info(f'Out features: {out_features}')
+    environment = CitizenScienceEnv(vectorized_df[0], out_features, N_SEQUENCES)
 
     citizen_science_vec =DummyVecEnv([lambda: CitizenScienceEnv(vec_df, out_features, N_SEQUENCES) for vec_df in vectorized_df])
     monitor_train = VecMonitor(citizen_science_vec)
     
     logger.info(f'Vectorized environments created')
-    
-    base_path = os.path.join(
-        S3_BASELINE_PATH,
-        'reinforcement_learning_incentives_3',
-        f'n_files_{n_files}',
-        feature_ext + '_' + 'label' if lstm.startswith('continue') else feature_ext + f'_{lstm}',
-        'results',
-        exec_time,
-    ) 
-    
+
+    base_exp_path = os.path.join('experiments', f'dqn_{lstm}_{feature_ext}/{exec_time}')
+
+
     tensorboard_dir, checkpoint_dir = (
-        os.path.join(base_path, 'training_metrics'),
-        os.path.join(base_path, 'checkpoints')
+        os.path.join(base_exp_path, 'training_metrics'),
+        os.path.join(base_exp_path, 'checkpoints')
     )
 
-    write_dir = tensorboard_dir
-    
-    if not os.path.exists(write_dir):
-        logger.info(f'Creating directory {write_dir} for tensorboard logs')
-        os.makedirs(write_dir)
-    
+    if not os.path.exists(tensorboard_dir):
+        logger.info(f'Creating directory {tensorboard_dir} for tensorboard logs')
+        os.makedirs(tensorboard_dir)
+   
+    if not os.path.exists(checkpoint_dir):
+        logger.info(f'Creating directory {checkpoint_dir} for checkpoints')
+        os.makedirs(checkpoint_dir) 
 
     callback_max_episodes = StopTrainingOnMaxEpisodes(max_episodes=n_episodes, verbose=1)
-    checkpoint_callback = CheckpointCallback(save_freq=CHECKPOINT_FREQ// (n_envs // 2), save_path=checkpoint_dir, name_prefix='rl_model')
+    checkpoint_freq = int(CHECKPOINT_FREQ // n_envs)
+    log_freq = int(TB_LOG // n_envs)
+    checkpoint_callback = CheckpointCallback(
+        save_freq=checkpoint_freq,
+        save_path=checkpoint_dir, 
+        verbose=2
+    )
     
-    DistributionCallback.tensorboard_setup(write_dir, TB_LOG)
+    DistributionCallback.tensorboard_setup(tensorboard_dir, TB_LOG // n_envs * 2) 
     logger_callback = DistributionCallback()
     
-    callback_list = CallbackList([callback_max_episodes, checkpoint_callback, logger_callback])
+    callback_list = CallbackList([checkpoint_callback, logger_callback, callback_max_episodes])
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
@@ -180,19 +167,12 @@ def main(args):
         'feature_extractor: {}'.format(feature_ext),
         'tensorboard_dir: {}'.format(tensorboard_dir),
         'checkpoint_dir: {}'.format(checkpoint_dir),
-        'write_dir: {}'.format(write_dir),
+        'checkpoint_freq: {}'.format(checkpoint_freq),
+        'tb_freq: {}'.format(log_freq),
     ]))
     
-    model.learn(total_timesteps=10000, progress_bar=True, log_interval=TB_LOG, callback=callback_list)
+    model.learn(total_timesteps=25_00, progress_bar=True, log_interval=log_freq, callback=callback_list)
     
-    info_container = monitor_train.get_attr('episode_bins')
-    info_container = [i for sublist in info_container for i in sublist]
-    info_df = pd.DataFrame(info_container)
-    info_df.to_csv("test_experiment.csv")
-    
-    print(info_df.head(10))
-
-
 if __name__ == '__main__':
     args = parse_args()
     

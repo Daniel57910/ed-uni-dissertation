@@ -1,15 +1,27 @@
-get evaluation results
-    CNN label
-    CNN seq_40
-    CNN none
 
-run with incentive index:
-    CNN seq_40
-    CNN label
-    
-results:
-    create hp function
-    hp_filter on losses
-    hp_filter on rewards
+sort out data with 50% window
+    - all data processed in one block
+    - train partition scaled; evaluated scaled using same scaler
+    - batches created and written to disk for train and evaluation
 
+sort out iterating through non completed sessions then resetting
+sort out writing statistics to csv 
+
+Q1:
+
+investigate:
+    simulation end at 50%
+    likelihood returning = pdf(
+        loc=incentive_time,
+        scale=incentive_time * .75
+    ).cdf(simulation_time) 
+
+    3 possible incentives and conditions 
+    conditons:
+        1st placed before 50% of session: random noise reduction (-0.05 - 0)
+        2nd (placed after ): random noise reduction (-0.15 - -0.1)
+        3rd (placed after ) of session: random noise reduction (-0.25 - -0.15)
+
+
+after 75 minutes it is expected that user has motivation beyond incentives and will continue
 

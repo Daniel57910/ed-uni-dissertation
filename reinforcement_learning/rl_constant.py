@@ -1,5 +1,6 @@
-
 FEATURE_COLUMNS = [
+    
+    "user_count",
     "country_count", 
     "date_hour_sin", 
     "date_hour_cos",
@@ -24,6 +25,7 @@ FEATURE_COLUMNS = [
     "previous_session_time",
     "previous_session_events",
 ]
+
 
 METADATA = [
     "user_id",

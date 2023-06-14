@@ -7,6 +7,7 @@ from pprint import pformat
 from typing import Callable
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.callbacks import CallbackList
 import boto3
 import random
 import numpy as np
@@ -14,17 +15,12 @@ import pandas as pd
 import torch
 from callback import DistributionCallback
 from environment import CitizenScienceEnv
-# from environment_eval import CitizenScienceEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 from policies.cnn_policy import CustomConv1dFeatures
 from rl_constant import (
-    FEATURE_COLS, METADATA_COLS, PREDICTION_COLS, RL_STAT_COLS, PREDICTION_COLS, LOAD_COLS
+    FEATURE_COLUMNS
 )
 from stable_baselines3 import DQN, PPO, A2C, SAC, TD3
-import tqdm
-from joblib import Parallel, delayed
-import json
-from pqdm.processes import pqdm
-from policy_list import POLICY_LIST
 
 
 logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p', level=logging.INFO)
@@ -34,14 +30,18 @@ pd.set_option('display.max_columns', 500)
 pd.set_option('display.width', 1000)
 pd.set_option('display.max_rows', 500)
 import zipfile
-
+import torch.nn as nn
 
 S3_BASELINE_PATH = 'dissertation-data-dmiller'
-N_SEQUENCES = 40
+N_SEQUENCES = 15
 CHECKPOINT_FREQ = 100_000
 TB_LOG = 10_000
 WINDOW = 2
 import glob
+TB_LOG = 10_000
+WINDOW = 1
+REWARD_CLIP = 90
+MIN_MAX_RANGE = (10, 90)
 
 global logger
 
@@ -53,28 +53,25 @@ torch.manual_seed(42)
 
 def parse_args():
     parse = argparse.ArgumentParser()
-    parse.add_argument('--write_path', type=str, default='datasets/rl_results')
-    parse.add_argument('--n_files', type=int, default=2)
-    parse.add_argument('--part', type=str, default='train')
-    parse.add_argument('--model', type=str, default='DQN')
-    parse.add_argument('--feature_extractor', type=str, default='CNN')
-    parse.add_argument('--lstm', type=str, default='label')
-    args = parse.parse_args()
-    return args
+    parse.add_argument('--write_path', type=str, default='rl_evaluation')
+    parse.add_argument('--part', type=str, default='eval')
+    parse.add_argument('--algo', type=str, default='dqn_pred_cnn'),
+
+    parse.add_argument('--run_date', type=str, default='2023-06-13_16-11-42'),
+    parse.add_argument('--n_files', type=int, default=30)
+                       
+    return parse.parse_args()
 
 
-def find_s3_candidate(client, feature_extractor, lstm, run_time):
+def find_s3_candidate(algo, run_date):
     
-    if lstm == 'seq_20':
-        lstm = 'seq_40'
     folder_prefix = os.path.join(
-        'reinforcement_learning_incentives_3',
-        'n_files_30',
-        f'{feature_extractor}_{lstm}',
-        'results',
-        run_time,
-        'checkpoints',
+        'experiments',
+        algo,
+        run_date,
+        'checkpoints'
     )
+
     
     logger.info(f'Looking for files in {folder_prefix}')
     
@@ -92,74 +89,22 @@ def find_s3_candidate(client, feature_extractor, lstm, run_time):
     
     return s3_candidate
 
-def get_policy(client, feature_extractor, lstm, run_time, algo):
+def get_policy(algo, run_date):
     
     
-    s3_candidate = find_s3_candidate(client, feature_extractor, lstm, run_time)
+    s3_candidate = find_s3_candidate(algo, run_date)
     
-    model_base_path, download_path = (
-        os.path.join('reinforcement_learning_incentives_3', f'{feature_extractor}_{lstm}'),
-        os.path.join('reinforcement_learning_incentives_3', f'{feature_extractor}_{lstm}', f'{algo}.zip') 
-    )
-    
-    if not os.path.exists(model_base_path):
-        logger.info(f'Creating directory {model_base_path}')
-        os.makedirs(model_base_path)
-    client.download_file(S3_BASELINE_PATH, s3_candidate, download_path)
-    logger.info(f'Loading model from {s3_candidate} to {download_path}')
-
-    logger.info(f'Checkpoint load path: {download_path}')
-    return download_path
+    client.download_file(S3_BASELINE_PATH, s3_candidate, s3_candidate)
+    return s3_candidate
         
 
+def simplify_experiment(vectorized_df):
+    vectorized_df = [
+        df[(df['session_size'] >= MIN_MAX_RANGE[0]) & (df['session_size'] <= MIN_MAX_RANGE[1])] for df in vectorized_df
+    ]
 
-def run_exp_wrapper(args, vectorized_df):
-    
-        logger.info(f'Getting policy for {args["feature_extractor"].lower()}, {args["lstm"]}, {args["run_time"]}, {args["algo"]}')
-        policy_weights = get_policy(client, args['feature_extractor'].lower(), args['lstm'], args['run_time'], args['algo'])
-       
-        
-        logger.info(f'Policy weights loaded')
-        
-        out_features = FEATURE_COLS + ([args['lstm']] if args['lstm'] else [])
+    return vectorized_df
 
-        citizen_science_vec = DummyVecEnv(
-            [lambda: CitizenScienceEnv(df, out_features, N_SEQUENCES) for df in vectorized_df]
-        )
-        
-    
-        logger.info(f'Vectorized dataset, setting policy weights')
-        if args['feature_extractor'].lower() == 'cnn':
-            CustomConv1dFeatures.setup_sequences_features(N_SEQUENCES + 1, len(out_features))
-            logger.info(f'Using custom CNN feature extractor')
-            policy_kwargs = dict(
-                features_extractor_class=CustomConv1dFeatures,
-                net_arch=[10]
-            )
-        
-            model = DQN(policy='CnnPolicy', env=citizen_science_vec, policy_kwargs=policy_kwargs)
-        else:
-            model = DQN(policy='MlpPolicy', env=citizen_science_vec)
-        
-        model.set_parameters(policy_weights)
-        
-        logger.info(f'Policy weights set, running experiment')
-        logger.info(f'Evaluation beginning: {args["feature_extractor"]} {args["lstm"]} {args["algo"]} n_episodes=10')
-
-        evaluate_policy(
-            model,
-            citizen_science_vec,
-            10,
-            deterministic=True
-        )
-        
-        logger.info(f'Evaluation complete: {args["feature_extractor"]} {args["lstm"]} {args["algo"]} n_episodes=10')
-        
-        info_container = citizen_science_vec.get_attr('episode_bins')
-        info_container = [i for sublist in info_container for i in sublist]
-        
-        return pd.DataFrame(info_container)
-            
       
 def download_dataset_from_s3(client, base_read_path, full_read_path):
     logger.info(f'Downloading data from {base_read_path}')
@@ -173,6 +118,22 @@ def download_dataset_from_s3(client, base_read_path, full_read_path):
     )
     logger.info(f'Downloaded data from dissertation-data-dmiller/{full_read_path}')
     
+
+def simplify_experiment(vectorized_df):
+    vectorized_df = [
+        df[(df['session_size'] >= MIN_MAX_RANGE[0]) & (df['session_size'] <= MIN_MAX_RANGE[1])] for df in vectorized_df
+    ]
+
+    return vectorized_df
+
+def _label_or_pred(algo):
+    if 'label' in algo:
+        return 'label'
+    elif 'pred' in algo:
+        return 'pred'
+    else:
+        return None
+    
 def main(args):
     
     global client
@@ -181,47 +142,132 @@ def main(args):
 
     logger.info('Starting offlline evaluation of RL model')
     
-    write_path, n_files, part, model, feat_ext, lstm = (
+    write_path, part, algo, run_date, n_files = (
         args.write_path,
-        args.n_files,
         args.part,
-        args.model,
-        args.feature_extractor,
-        args.lstm,
+        args.algo,
+        args.run_date,
+        args.n_files
+    )
+    
+    
+    read_path = os.path.join(
+        'rl_ready_data_conv',
+        f'files_used_{n_files}',
+        'window_1',
+        f'batched_{part}'
     )
    
-    base_read_path = os.path.join('rl_ready_data_conv', f'files_used_{n_files}')
-    vec_df_path = os.path.join(base_read_path, f'citizen_science_{part}_batched')
-    vec_df_files = glob.glob(os.path.join(vec_df_path, '*.parquet'))
+    logger.info(f'Reading from {read_path}, writing to {write_path}') 
+    files_to_read = glob.glob(os.path.join(read_path, '*.parquet'))
+    logger.info(f'Found {len(files_to_read)} files to read')
     
-    vectorized_df = [
-        pd.read_parquet(file)
-        for file in vec_df_files
+    
+    feature_cols = FEATURE_COLUMNS + [_label_or_pred(algo)] if _label_or_pred(algo) else FEATURE_COLUMNS
+    for col in sorted(feature_cols):
+        logger.info(f'Using column {col}')
+    
+    logger.info(f'n features: {len(feature_cols)}')
+
+    env_files = [
+        pd.read_parquet(file) for file in files_to_read[:20]
     ]
 
-    policy_meta = next(r for r  in POLICY_LIST if r['algo'] == model and r['feature_extractor'] == feat_ext and r['lstm'] == lstm)
-    if policy_meta is None:
-        raise ValueError(f'No policy found for {model}, {feat_ext}, {lstm}')
 
-    logger.info(f'Running evaluation for {policy_meta}')
+    logger.info(f'Loaded env files: clipping to {MIN_MAX_RANGE}')
     
-    evaluation_results = run_exp_wrapper(policy_meta, vectorized_df)
+    env_files = simplify_experiment(env_files)
 
-    logger.info(f'Summary of evaluation results: {evaluation_results.shape}')
-    write_path = os.path.join(write_path, f'window_{WINDOW}_{part}')
+    n_envs = len(env_files) 
+    vec_env = DummyVecEnv(
+        [lambda: CitizenScienceEnv(df, feature_cols, N_SEQUENCES) for df in env_files]
+    )
    
-    if not os.path.exists(write_path):
-        logger.info(f'Creating directory {write_path}')
-        os.makedirs(write_path)
-        
-    full_write_path = os.path.join(write_path, f'{model}_{feat_ext}_{lstm}.parquet').lower()
 
-    logger.info(f'Writing evaluation results to {full_write_path}')
-    evaluation_results.to_parquet(full_write_path)
+    
+    tensorboard_dir = os.path.join(
+        args.write_path,
+        f'{args.part}/{algo}_{run_date}'
+    )
+       
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+ 
+    logger.info(f'Logging to {tensorboard_dir}, n envs: {n_envs}: device: {device}')
+    
+    monitor_env = VecMonitor(vec_env)
+    policy_path = get_policy(algo, run_date)
+    
+    
+    DistributionCallback.tensorboard_setup(tensorboard_dir, (TB_LOG) // n_envs)
+    logger_callback = DistributionCallback()
+    callack_list = CallbackList([logger_callback])
+    logger.info(f'Setting up model')
+    if 'cnn' in algo:
+        CustomConv1dFeatures.setup_sequences_features(N_SEQUENCES + 1, len(feature_cols) + 3)
+        logger.info(f'Using custom CNN feature extractor')
+        policy_kwargs = dict(
+            features_extractor_class=CustomConv1dFeatures,
+            net_arch=[12],
+            normalize_images=False,
+            activation_fn=nn.ELU
+        )
+        model = DQN(
+            policy='CnnPolicy', 
+            env=monitor_env,
+            verbose=1,
+            tensorboard_log=tensorboard_dir,
+            policy_kwargs=policy_kwargs,
+            device=device,
+            stats_window_size=1000
+        )
+                    
+    else:
+        model = DQN(
+            policy='MlpPolicy', 
+            env=monitor_env,
+            verbose=1, 
+            tensorboard_log=tensorboard_dir, 
+            policy_kwargs=dict(
+                activation_fn=nn.ELU,
+                normalize_images=False,
+            ),
+            device=device, 
+            stats_window_size=1000
+        )
+    
 
-    print(evaluation_results.head())
+    logger.info(f'Loading model from {policy_path}')
+    model = model.load(policy_path)
+    
+    
+    
+    logger.info(f'Running evaluation')
+    evaluate_policy(
+        model,
+        monitor_env,
+        n_eval_episodes=100,
+        deterministic=True,
 
-
+    )
+    
+    
+    comp_sessions = monitor_env.get_attr('episode_bins')
+    values_to_log = [session_list for session_list in comp_sessions for sess in session_list if len(session_list) > 0]
+    df = pd.DataFrame(values_to_log)
+    
+    logger.info(f'Evaluation completed: {df.shape}')
+    write_path = os.path.join(
+        write_path,
+        part,
+        f'{algo}_{run_date}',
+        'finished_sessions.parquet'
+    )
+    
+    if not os.path.exists(os.path.dirname(write_path)):
+        os.makedirs(os.path.dirname(write_path), exist_ok=True)
+    
+    logger.info(f'Writing to {write_path}')
+    df.to_parquet(write_path)
 if __name__ == '__main__':
     args = parse_args()
     main(args)

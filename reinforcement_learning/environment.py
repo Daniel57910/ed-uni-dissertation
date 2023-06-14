@@ -1,9 +1,12 @@
 # %load environment
+# %load environment
 import gym
 import numpy as np
 from scipy.stats import norm
 MAX_EVAL_SIZE = 75
-from rl_constant import RL_STAT_COLS
+from rl_constant import (
+    RL_STAT_COLS
+)
 
 class CitizenScienceEnv(gym.Env):
     
@@ -29,6 +32,7 @@ class CitizenScienceEnv(gym.Env):
         
         self.action_space = gym.spaces.Discrete(4)
         self.observation_space = gym.spaces.Box(low=-1, high=max_session_size, shape=(len(out_features) + 3, n_sequences + 1), dtype=np.float32)
+
         self.evalution = evaluation
         self.episode_bins = []
         self.exp_runs = 0

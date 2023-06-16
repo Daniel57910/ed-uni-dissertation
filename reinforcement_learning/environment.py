@@ -4,9 +4,6 @@ import gym
 import numpy as np
 from scipy.stats import norm
 MAX_EVAL_SIZE = 75
-from rl_constant import (
-    RL_STAT_COLS
-)
 
 class CitizenScienceEnv(gym.Env):
     
@@ -32,7 +29,6 @@ class CitizenScienceEnv(gym.Env):
         
         self.action_space = gym.spaces.Discrete(4)
         self.observation_space = gym.spaces.Box(low=-1, high=max_session_size, shape=(len(out_features) + 3, n_sequences + 1), dtype=np.float32)
-
         self.evalution = evaluation
         self.episode_bins = []
         self.exp_runs = 0
@@ -66,15 +62,7 @@ class CitizenScienceEnv(gym.Env):
 
     def step(self, action):
         
-        is_legal = self._take_action(action)
-        if is_legal < 0:
-            self.exp_runs += 1
-            self.metadata['ended_event'] = -1
-            self.metadata['ended_time'] = -1
-            self.metadata['exp_runs'] = self.exp_runs
-            self.episode_bins.append(self._row_to_dict(self.metadata))
-            
-            return None, float(-1), True, {}
+        self._take_action(action)
             
         next_state, done, meta = self._calculate_next_state()
         
@@ -186,7 +174,7 @@ class CitizenScienceEnv(gym.Env):
     
         if action == 1:
             if self.metadata['inc_small'] > 0:
-                return -1
+                return 1
 
             self.metadata['inc_small'] = self.current_session.iloc[current_session_index]['cum_session_event_raw']
             self.metadata['time_small'] = self.current_session.iloc[current_session_index]['cum_session_time_raw']
@@ -194,14 +182,14 @@ class CitizenScienceEnv(gym.Env):
     
         elif action == 2:
             if self.metadata['inc_medium'] > 0:
-                return -1
+                return 1
             self.metadata['inc_medium'] = self.current_session.iloc[current_session_index]['cum_session_event_raw']
             self.metadata['time_medium'] = self.current_session.iloc[current_session_index]['cum_session_time_raw']
             return 1
         
         else:
             if self.metadata['inc_large'] > 0:
-                return -1
+                return 1
             self.metadata['inc_large'] = self.current_session.iloc[current_session_index]['cum_session_event_raw']
             self.metadata['time_large'] = self.current_session.iloc[current_session_index]['cum_session_time_raw']
             return 1

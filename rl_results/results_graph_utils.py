@@ -14,11 +14,14 @@ import glob
 LOG_DIR = 'dissertation_project_code/rl_results/dqn_csv'
 
 EXPERIMENTS = {
-    # 'dqn_label_cnn': 'experiments/dqn_label_cnn/2023-06-12_11-11-24/training_metrics',
-    # 'dqn_pred_cnn': 'experiments/dqn_pred_cnn/2023-06-13_10-39-58/training_metrics',
-    'dqn_pred_cnn_no_norm': 'experiments/dqn_pred_cnn/2023-06-13_16-11-42/training_metrics'
-    # 'dqn_none_cnn': 'experiments/dqn_None_cnn/2023-06-12_17-27-14/training_metrics',
-    # 'dqn_label_mlp': 'experiments/dqn_label_mlp/2023-06-12_17-48-00/training_metrics',
+    'dqn_pred_cnn': 'experiments/dqn_pred_cnn/2023-06-13_16-11-42/training_metrics',
+    'dqn_label_cnn': 'experiments/dqn_label_cnn/2023-06-14_07-19-19/training_metrics',
+    'dqn_none_cnn': 'experiments/dqn_None_cnn/2023-06-14_13-40-54/training_metrics',
+    'dqn_pred_mlp': 'experiments/dqn_pred_mlp/2023-06-14_20-10-32/training_metrics',
+    'dqn_pred_cnn_clip': 'experiments/dqn_pred_cnn/2023-06-15_12-09-51/training_metrics',
+    'dqn_pred_cnn_no_pen': 'experiments/dqn_pred_cnn/2023-06-15_12-34-28/training_metrics',
+    'dqn_cnn_none_no_pen': 'experiments/dqn_None_cnn/2023-06-15_16-19-35/training_metrics'
+
 }
 EXPERIMENT_PATH = 'experiments'
 import argparse

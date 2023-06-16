@@ -44,6 +44,42 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn.functional as F
+import argparse
+import logging
+import os
+from datetime import datetime
+from functools import reduce
+from pprint import pformat
+from typing import Callable
+import boto3
+import random
+import numpy as np
+import pandas as pd
+import torch
+
+
+from stable_baselines3 import A2C, DQN, PPO
+from stable_baselines3.common.callbacks import (CallbackList,
+                                                CheckpointCallback,
+                                                StopTrainingOnMaxEpisodes)
+from stable_baselines3.common.env_checker import check_env
+from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor, VecNormalize
+from stable_baselines3.dqn.policies import DQNPolicy
+
+
+import argparse
+import logging
+import os
+from datetime import datetime
+from functools import reduce
+from pprint import pformat
+from typing import Callable
+import boto3
+import random
+import numpy as np
+import pandas as pd
+import torch
+import torch.nn.functional as F
 
 logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p', level=logging.INFO)
 np.set_printoptions(precision=4, linewidth=1000, suppress=True)
@@ -61,7 +97,7 @@ logger.setLevel(logging.INFO)
 
 S3_BASELINE_PATH = 's3://dissertation-data-dmiller/'
 N_SEQUENCES = 15
-CHECKPOINT_FREQ = 750_000
+CHECKPOINT_FREQ = 300_000
 TB_LOG = 10_000
 WINDOW = 1
 REWARD_CLIP = 90
@@ -98,14 +134,21 @@ def parse_args():
     parse.add_argument('--lstm', type=str, default='label')
     parse.add_argument('--part', type=str, default='train')
     parse.add_argument('--feature_extractor', type=str, default='cnn') 
+    parse.add_argument('--clip_engagement', type=bool, default=False)
     args = parse.parse_args()
     return args
 
 
-def simplify_experiment(vectorized_df):
+def simplify_experiment(vectorized_df, clip_engagement=False):
     vectorized_df = [
         df[(df['session_size'] >= MIN_MAX_RANGE[0]) & (df['session_size'] <= MIN_MAX_RANGE[1])] for df in vectorized_df
     ]
+    if clip_engagement:
+        vectorized_df_clip = []
+        for df in vectorized_df:
+            df['pred'] = df['pred'].apply(lambda x: 1 if x > .5 else 0)
+            vectorized_df_clip.append(df)
+        vectorized_df = vectorized_df_clip
 
     return vectorized_df
 
@@ -117,13 +160,14 @@ def main(args):
     logger.info(pformat(args.__dict__))
     exec_time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
     
-    read_path, n_files, n_episodes, lstm, part, feature_ext = (
+    read_path, n_files, n_episodes, lstm, part, feature_ext, clip_engage = (
         args.read_path, 
         args.n_files, 
         args.n_episodes, 
         args.lstm,
         args.part,
         args.feature_extractor,
+        args.clip_engagement
     )
 
     base_read_path = os.path.join(read_path, f'files_used_{n_files}', f'window_{WINDOW}', f'batched_{part}')
@@ -138,8 +182,7 @@ def main(args):
         for file in files
     ]
    
-    df_files = simplify_experiment(df_files)
-    # df_files.extend(df_files)
+    df_files = simplify_experiment(df_files, clip_engagement=clip_engage)
 
     n_envs = len(df_files)
     
@@ -150,7 +193,7 @@ def main(args):
     logger.info(f'Out features: {out_features}')
 
     citizen_science_vec =DummyVecEnv([lambda: CitizenScienceEnv(vec_df, out_features, N_SEQUENCES) for vec_df in df_files])
-    citizen_science_vec = VecNormalize(citizen_science_vec, norm_obs=False, norm_reward=True, clip_reward=REWARD_CLIP)
+    # citizen_science_vec = VecNormalize(citizen_science_vec, norm_obs=False, norm_reward=True, clip_reward=REWARD_CLIP)
 
     monitor_train = VecMonitor(citizen_science_vec)
     
@@ -205,6 +248,19 @@ def main(args):
             policy_kwargs=policy_kwargs, 
             device=device, 
             stats_window_size=1000)
+    else:
+        model = DQN(
+            policy='MlpPolicy', 
+            env=monitor_train, 
+            verbose=1, 
+            tensorboard_log=tensorboard_dir, 
+            policy_kwargs=dict(
+                activation_fn=nn.ELU,
+                normalize_images=False,
+            ),
+            device=device, 
+            stats_window_size=1000
+        )
         
     logger.info(f'Model created: policy')
     
@@ -229,13 +285,8 @@ def main(args):
         'tb_freq: {}'.format(log_freq),
     ]))
     
-    sample_env = CitizenScienceEnv(df_files[0], out_features, N_SEQUENCES)
-    sample_step = sample_env.reset()
-    
-    model.predict(sample_step)
-    
 
-
+    model.learn(total_timesteps=8_000_000, log_interval=log_freq, progress_bar=True, callback=callback_list)
 
     # model.learn(total_timesteps=n_episodes, log_interval=log_freq, progress_bar=True, callback=callback_list)
     # model.learn(total_timesteps=8_000_000, log_interval=log_freq, progress_bar=True, callback=callback_list)

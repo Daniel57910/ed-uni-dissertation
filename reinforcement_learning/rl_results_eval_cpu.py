@@ -252,7 +252,8 @@ def main(args):
     
     
     comp_sessions = monitor_env.get_attr('episode_bins')
-    values_to_log = [session_list for session_list in comp_sessions for sess in session_list if len(session_list) > 0]
+    values_to_log = [sess_list for sess_list in comp_sessions if sess_list is not None]
+    values_to_log = [item for sublist in values_to_log for item in sublist]
     df = pd.DataFrame(values_to_log)
     
     logger.info(f'Evaluation completed: {df.shape}')

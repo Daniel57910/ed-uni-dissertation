@@ -1,7 +1,7 @@
 FEATURE_COLUMNS = [
     
     "user_count",
-    "project_count" 
+    # "project_count",
     "country_count", 
     "date_hour_sin", 
     "date_hour_cos",

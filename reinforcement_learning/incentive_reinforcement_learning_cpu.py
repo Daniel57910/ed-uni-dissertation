@@ -136,7 +136,7 @@ def parse_args():
     parse.add_argument('--part', type=str, default='train')
     parse.add_argument('--feature_extractor', type=str, default='cnn') 
     parse.add_argument('--clip_engagement', type=bool, default=False)
-    parse.add_argument('--her_env', type=bool, default=True)
+    parse.add_argument('--her_env', type=bool, default=False)
     args = parse.parse_args()
     return args
 
@@ -268,7 +268,7 @@ def main(args):
         )
         
     logger.info(f'Model created: policy')
-    
+   
     logger.info(pformat(model.policy))
         
     logger.info(f'Beginning training') 
@@ -290,9 +290,24 @@ def main(args):
         'tb_freq: {}'.format(log_freq),
         'hindsight experience replay: {}'.format(her),
     ]))
-    
+           
+    env = CitizenScienceEnv(df_files[0], out_features, N_SEQUENCES)
 
-    model.learn(total_timesteps=10_000, log_interval=log_freq, progress_bar=True, callback=callback_list)
+    done = False
+    for _ in range(2):
+        state = env.reset()
+        while not done:
+            state, reward, done, info = env.step(env.action_space.sample())
+    
+    
+    outcomes = pd.DataFrame(env.episode_bins) 
+    
+    
+    print(outcomes.head())
+            
+            
+
+    # model.learn(total_timesteps=10_000, log_interval=log_freq, progress_bar=True, callback=callback_list)
 
     # model.learn(total_timesteps=n_episodes, log_interval=log_freq, progress_bar=True, callback=callback_list)
     # model.learn(total_timesteps=8_000_000, log_interval=log_freq, progress_bar=True, callback=callback_list)

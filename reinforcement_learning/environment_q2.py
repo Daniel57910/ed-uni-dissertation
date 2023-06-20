@@ -1,4 +1,5 @@
-
+# %load environment
+# %load environment
 import gym
 import numpy as np
 from scipy.stats import norm
@@ -32,7 +33,7 @@ class CitizenScienceEnv(gym.Env):
         self.episode_bins = []
         self.exp_runs = 0
         self.params = params
-        
+        self.social_components = np.array([10, 20, 30, 40, 50, 70])
 
     def reset(self):
         random_session = np.random.randint(0, self.unique_sessions.shape[0])
@@ -56,15 +57,24 @@ class CitizenScienceEnv(gym.Env):
             0 if cum_session_event_raw < size_cutoff
             (cum_session_event_raw - size_cutoff) * (cum_session_event_raw / size_cutoff) otherwise
         """
-        if cum_session_event_raw <= self.metadata['size_cutoff']:
-            return cum_session_event_raw / self.metadata['size_cutoff']
         
-        return (cum_session_event_raw - self.metadata['size_cutoff']) * (cum_session_event_raw / self.metadata['size_cutoff'])
+        if all([self.metadata['inc_small'] == 0, self.metadata['inc_medium'] == 0, self.metadata['inc_large'] == 0]):
+            distance_shaper = cum_session_event_raw / 4
+        
+        else:
+            distance_shaper = np.linalg.norm([
+                self.metadata['inc_small'], 
+                self.metadata['inc_medium'] - self.metadata['inc_small'], 
+                self.metadata['inc_large'] - self.metadata['inc_medium'] ])
+        if cum_session_event_raw <= self.metadata['size_cutoff']:
+            return (cum_session_event_raw / self.metadata['size_cutoff']) * distance_shaper
+        
+        return (cum_session_event_raw - self.metadata['size_cutoff']) * (cum_session_event_raw / self.metadata['size_cutoff']) * distance_shaper
 
     def step(self, action):
         
         self._take_action(action)
-            
+        self._assign_social_components()
         next_state, done, meta = self._calculate_next_state()
         
         
@@ -73,11 +83,6 @@ class CitizenScienceEnv(gym.Env):
                 self.current_session_index != self.current_session.shape[0] else self.current_session.shape[0] - 1
             
             self.exp_runs += 1
-            self.metadata['ended_event'] = self.current_session.iloc[current_session_index]['cum_session_event_raw']
-            self.metadata['ended_time'] = self.current_session.iloc[current_session_index]['cum_session_time_raw']
-            self.metadata['exp_runs'] = self.exp_runs
-            self.episode_bins.append(self._row_to_dict(self.metadata))
-            
             self.metadata['ended_event'] = self.current_session.iloc[current_session_index]['cum_session_event_raw']
             self.metadata['ended_time'] = self.current_session.iloc[current_session_index]['cum_session_time_raw']
             self.metadata['exp_runs'] = self.exp_runs
@@ -97,10 +102,22 @@ class CitizenScienceEnv(gym.Env):
             
             return next_state, reward_exp, done, meta
     
+    def _assign_social_components(self):
+        current_event = self.current_session_index
+        social_likelihood = np.searchsorted(self.social_components, current_event)
+        assign_social = norm(
+            loc=social_likelihood,
+            scale=social_likelihood // 6,
+        ).cdf(current_event) + np.random.normal(0, 0.04)
+        
+        if all([assign_social >= .4, assign_social <= 7]) and self.metadata[f'soc_{social_likelihood}'] == 0:
+            self.metadata[f'soc_{social_likelihood}'] = current_event
+
+ 
     def _metadata(self):
         session_metadata = self.current_session.iloc[0][RL_STAT_COLS].copy()
         session_metadata['ended'] = 0
-        for meta_col in ['small', 'medium', 'large']:
+        for meta_col in ['small', 'medium', 'large'] + [f'soc_{i}' for i in self.social_components]:
             session_metadata[f'inc_{meta_col}'] = 0
             session_metadata[f'time_{meta_col}'] = 0
 
@@ -140,11 +157,17 @@ class CitizenScienceEnv(gym.Env):
             
         extending_large = self._probability_extending(current_session_event, self.metadata['inc_large']) - \
             (param_large + np.random.normal(-0.02, 0.1, 100).mean())
+        
+        max_social_component = max([self.metadata[f'soc_{i}'] for i in self.social_components])
+        
+        extending_social = self._probability_extending(current_session_event, max_social_component) - \
+            (param_large + np.random.normal(-0.02, 0.1, 100).mean())
             
         return any([
             extending_low > 0.4 and extending_low <= param_window,
             extending_medium > 0.4 and extending_medium <= param_window,
-            extending_large > 0.4 and extending_large <= param_window
+            extending_large > 0.4 and extending_large <= param_window,
+            extending_social > 0.4 and extending_social <= param_window
         ])
         
            
@@ -171,6 +194,7 @@ class CitizenScienceEnv(gym.Env):
         return subset
     
     def _take_action(self, action):
+        
         if action == 0:
             return 1
         
@@ -219,6 +243,7 @@ class CitizenScienceEnv(gym.Env):
             events['inc_small'] = self.metadata['inc_small']
             events['inc_medium'] = self.metadata['inc_medium']
             events['inc_large'] = self.metadata['inc_large']
+           
             
             
             events = np.concatenate((zero_cat, events), axis=0)

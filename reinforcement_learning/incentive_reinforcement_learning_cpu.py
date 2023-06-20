@@ -29,6 +29,7 @@ from rl_constant import (
 )
 
 from environment import CitizenScienceEnv
+from environment_exp_replay import CitizenScienceEnvReplay
 from callback import DistributionCallback
 from policies.cnn_policy import CustomConv1dFeatures
 import argparse
@@ -58,7 +59,7 @@ import pandas as pd
 import torch
 
 
-from stable_baselines3 import A2C, DQN, PPO
+from stable_baselines3 import A2C, DQN, PPO, HerReplayBuffer
 from stable_baselines3.common.callbacks import (CallbackList,
                                                 CheckpointCallback,
                                                 StopTrainingOnMaxEpisodes)
@@ -135,6 +136,7 @@ def parse_args():
     parse.add_argument('--part', type=str, default='train')
     parse.add_argument('--feature_extractor', type=str, default='cnn') 
     parse.add_argument('--clip_engagement', type=bool, default=False)
+    parse.add_argument('--her_env', type=bool, default=True)
     args = parse.parse_args()
     return args
 
@@ -160,14 +162,15 @@ def main(args):
     logger.info(pformat(args.__dict__))
     exec_time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
     
-    read_path, n_files, n_episodes, lstm, part, feature_ext, clip_engage = (
+    read_path, n_files, n_episodes, lstm, part, feature_ext, clip_engage, her = (
         args.read_path, 
         args.n_files, 
         args.n_episodes, 
         args.lstm,
         args.part,
         args.feature_extractor,
-        args.clip_engagement
+        args.clip_engagement,
+        args.her_env
     )
 
     base_read_path = os.path.join(read_path, f'files_used_{n_files}', f'window_{WINDOW}', f'batched_{part}')
@@ -191,9 +194,11 @@ def main(args):
     out_features = FEATURE_COLUMNS + [lstm] if lstm else FEATURE_COLUMNS
     
     logger.info(f'Out features: {out_features}')
-
-    citizen_science_vec =DummyVecEnv([lambda: CitizenScienceEnv(vec_df, out_features, N_SEQUENCES) for vec_df in df_files])
-    # citizen_science_vec = VecNormalize(citizen_science_vec, norm_obs=False, norm_reward=True, clip_reward=REWARD_CLIP)
+    if her:
+        citizen_science_vec = DummyVecEnv([lambda: CitizenScienceEnvReplay(vec_df, out_features, N_SEQUENCES) for vec_df in df_files])
+    else:
+        citizen_science_vec =DummyVecEnv([lambda: CitizenScienceEnv(vec_df, out_features, N_SEQUENCES) for vec_df in df_files])
+    
 
     monitor_train = VecMonitor(citizen_science_vec)
     
@@ -241,7 +246,7 @@ def main(args):
             
         )
         model = DQN(
-            policy='CnnPolicy', 
+            policy='MultiInputPolicy', 
             env=monitor_train, 
             verbose=1, 
             tensorboard_log=tensorboard_dir, 
@@ -283,10 +288,11 @@ def main(args):
         'checkpoint_dir: {}'.format(checkpoint_dir),
         'checkpoint_freq: {}'.format(checkpoint_freq),
         'tb_freq: {}'.format(log_freq),
+        'hindsight experience replay: {}'.format(her),
     ]))
     
 
-    model.learn(total_timesteps=8_000_000, log_interval=log_freq, progress_bar=True, callback=callback_list)
+    model.learn(total_timesteps=10_000, log_interval=log_freq, progress_bar=True, callback=callback_list)
 
     # model.learn(total_timesteps=n_episodes, log_interval=log_freq, progress_bar=True, callback=callback_list)
     # model.learn(total_timesteps=8_000_000, log_interval=log_freq, progress_bar=True, callback=callback_list)

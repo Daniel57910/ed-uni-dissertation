@@ -4,12 +4,13 @@ import gym
 import numpy as np
 from scipy.stats import norm
 MAX_EVAL_SIZE = 75
+from rl_constant import RL_STAT_COLS
 
 class CitizenScienceEnv(gym.Env):
     
     metadata = {'render.modes': ['human']}
     
-    def __init__(self, dataset, out_features, n_sequences, evaluation=False):
+    def __init__(self, dataset, out_features, n_sequences, params=None):
         """
         trajectories: dictionary of user_id to their respective trajectories.
         n_sequences: number of sequences used for preprocessing.
@@ -28,10 +29,11 @@ class CitizenScienceEnv(gym.Env):
         max_session_size = self.dataset['session_size'].max()
         
         self.action_space = gym.spaces.Discrete(4)
-        self.observation_space = gym.spaces.Box(low=-1, high=max_session_size, shape=(len(out_features) + 3, n_sequences + 1), dtype=np.float32)
-        self.evalution = evaluation
+        self.observation_space = gym.spaces.Box(low=-1, high=max_session_size + 1, shape=(len(out_features) + 3, n_sequences + 1), dtype=np.float32)
         self.episode_bins = []
         self.exp_runs = 0
+        self.params = params
+        
 
     def reset(self):
         random_session = np.random.randint(0, self.unique_sessions.shape[0])
@@ -125,21 +127,25 @@ class CitizenScienceEnv(gym.Env):
         current_session_event = self.current_session.iloc[self.current_session_index]['cum_session_event_raw']
         if current_session_event <= event_cutoff or current_session_event  >= MAX_EVAL_SIZE:
             return True
+        
+        param_mid = 0.1 if not self.params else self.params['mid']
+        param_large = 0.2 if not self.params else self.params['large']
+        param_window = 0.75 if not self.params else self.params['window']
     
         extending_low = self._probability_extending(current_session_event, self.metadata['inc_small']) - \
             (0.05 + np.random.normal(-0.02, 0.1, 100).mean())
 
             
         extending_medium = self._probability_extending(current_session_event, self.metadata['inc_medium']) - \
-            (0.1 + np.random.normal(-0.02, 0.1, 100).mean()) 
+            (param_mid + np.random.normal(-0.02, 0.1, 100).mean()) 
             
         extending_large = self._probability_extending(current_session_event, self.metadata['inc_large']) + \
-            (0.2 + np.random.normal(-0.02, 0.1, 100).mean())
+            (param_large + np.random.normal(-0.02, 0.1, 100).mean())
             
         return any([
-            extending_low > 0.4 and extending_low <= 0.75,
-            extending_medium > 0.4 and extending_medium <= 0.75,
-            extending_large > 0.4 and extending_large <= 0.75
+            extending_low > 0.4 and extending_low <= param_window,
+            extending_medium > 0.4 and extending_medium <= param_window,
+            extending_large > 0.4 and extending_large <= param_window
         ])
         
            

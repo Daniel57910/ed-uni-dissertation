@@ -1,23 +1,29 @@
-import os
 import logging
+import os
 import re
+
 import boto3
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p')
 global logger, client
 logger = logging.getLogger(__name__)
 client = boto3.client('s3')
-import numpy as np
 import argparse
-from rl_constant import FEATURE_COLUMNS, METADATA, RL_STAT_COLS, LOAD_COLS
+import glob
 from itertools import combinations, product
+
+import numpy as np
+import pandas as pd
 from stable_baselines3 import DQN
-from environment import CitizenScienceEnv
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
-import pandas as pd
-import glob
+
+from environment import CitizenScienceEnv
+from rl_constant import FEATURE_COLUMNS, LOAD_COLS, METADATA, RL_STAT_COLS
+
 MIN_MAX_RANGE = (10, 90)
 from tqdm import tqdm
+
 N_SEQUENCES = 15
 
 S3_BASELINE_PATH = 'dissertation-data-dmiller'

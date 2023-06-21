@@ -1,86 +1,32 @@
 import argparse
 import logging
 import os
+import random
 from datetime import datetime
 from functools import reduce
 from pprint import pformat
 from typing import Callable
+
 import boto3
-import random
-import numpy as np
-import pandas as pd
-import torch
-
-
-from stable_baselines3 import A2C, DQN, PPO
-from stable_baselines3.common.callbacks import (CallbackList,
-                                                CheckpointCallback,
-                                                StopTrainingOnMaxEpisodes)
-from stable_baselines3.common.env_checker import check_env
-from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor, VecNormalize
-from stable_baselines3.dqn.policies import DQNPolicy
-
-from rl_constant import (
-    FEATURE_COLUMNS,
-    METADATA,
-    RL_STAT_COLS,
-    PREDICTION_COLS,
-    LOAD_COLS
-)
-
-from environment import CitizenScienceEnv
-from environment_exp_replay import CitizenScienceEnvReplay
-from callback import DistributionCallback
-from policies.cnn_policy import CustomConv1dFeatures
-import argparse
-import logging
-import os
-from datetime import datetime
-from functools import reduce
-from pprint import pformat
-from typing import Callable
-import boto3
-import random
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn.functional as F
-import argparse
-import logging
-import os
-from datetime import datetime
-from functools import reduce
-from pprint import pformat
-from typing import Callable
-import boto3
-import random
-import numpy as np
-import pandas as pd
-import torch
-
-
 from stable_baselines3 import A2C, DQN, PPO, HerReplayBuffer
 from stable_baselines3.common.callbacks import (CallbackList,
                                                 CheckpointCallback,
                                                 StopTrainingOnMaxEpisodes)
 from stable_baselines3.common.env_checker import check_env
-from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor, VecNormalize
+from stable_baselines3.common.vec_env import (DummyVecEnv, VecMonitor,
+                                              VecNormalize)
 from stable_baselines3.dqn.policies import DQNPolicy
 
-
-import argparse
-import logging
-import os
-from datetime import datetime
-from functools import reduce
-from pprint import pformat
-from typing import Callable
-import boto3
-import random
-import numpy as np
-import pandas as pd
-import torch
-import torch.nn.functional as F
+from callback import DistributionCallback
+from environment import CitizenScienceEnv
+from environment_q2 import CitizenScienceEnvQ2
+from policies.cnn_policy import CustomConv1dFeatures
+from rl_constant import (FEATURE_COLUMNS, LOAD_COLS, METADATA, PREDICTION_COLS,
+                         RL_STAT_COLS)
 
 logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p', level=logging.INFO)
 np.set_printoptions(precision=4, linewidth=1000, suppress=True)
@@ -92,6 +38,7 @@ random.seed(42)
 np.random.seed(42)
 torch.manual_seed(42)
 import torch.nn as nn
+
 global logger
 logger = logging.getLogger('rl_exp_train')
 logger.setLevel(logging.INFO)
@@ -135,22 +82,15 @@ def parse_args():
     parse.add_argument('--lstm', type=str, default='label')
     parse.add_argument('--part', type=str, default='train')
     parse.add_argument('--feature_extractor', type=str, default='cnn') 
-    parse.add_argument('--clip_engagement', type=bool, default=False)
-    parse.add_argument('--her_env', type=bool, default=False)
+    parse.add_argument('--q2', type=bool, default=True)
     args = parse.parse_args()
     return args
 
 
-def simplify_experiment(vectorized_df, clip_engagement=False):
+def simplify_experiment(vectorized_df):
     vectorized_df = [
         df[(df['session_size'] >= MIN_MAX_RANGE[0]) & (df['session_size'] <= MIN_MAX_RANGE[1])] for df in vectorized_df
     ]
-    if clip_engagement:
-        vectorized_df_clip = []
-        for df in vectorized_df:
-            df['pred'] = df['pred'].apply(lambda x: 1 if x > .5 else 0)
-            vectorized_df_clip.append(df)
-        vectorized_df = vectorized_df_clip
 
     return vectorized_df
 
@@ -162,15 +102,14 @@ def main(args):
     logger.info(pformat(args.__dict__))
     exec_time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
     
-    read_path, n_files, n_episodes, lstm, part, feature_ext, clip_engage, her = (
+    read_path, n_files, n_episodes, lstm, part, feature_ext, q2 = (
         args.read_path, 
         args.n_files, 
         args.n_episodes, 
         args.lstm,
         args.part,
         args.feature_extractor,
-        args.clip_engagement,
-        args.her_env
+        args.q2
     )
 
     base_read_path = os.path.join(read_path, f'files_used_{n_files}', f'window_{WINDOW}', f'batched_{part}')
@@ -185,7 +124,7 @@ def main(args):
         for file in files
     ]
    
-    df_files = simplify_experiment(df_files, clip_engagement=clip_engage)
+    df_files = simplify_experiment(df_files)
 
     n_envs = len(df_files)
     
@@ -194,8 +133,8 @@ def main(args):
     out_features = FEATURE_COLUMNS + [lstm] if lstm else FEATURE_COLUMNS
     
     logger.info(f'Out features: {out_features}')
-    if her:
-        citizen_science_vec = DummyVecEnv([lambda: CitizenScienceEnvReplay(vec_df, out_features, N_SEQUENCES) for vec_df in df_files])
+    if q2:
+        citizen_science_vec = DummyVecEnv([lambda: CitizenScienceEnvQ2(vec_df, out_features, N_SEQUENCES) for vec_df in df_files])
     else:
         citizen_science_vec =DummyVecEnv([lambda: CitizenScienceEnv(vec_df, out_features, N_SEQUENCES) for vec_df in df_files])
     
@@ -288,26 +227,15 @@ def main(args):
         'checkpoint_dir: {}'.format(checkpoint_dir),
         'checkpoint_freq: {}'.format(checkpoint_freq),
         'tb_freq: {}'.format(log_freq),
-        'hindsight experience replay: {}'.format(her),
+        'running q2: {}'.format(q2),
     ]))
-           
-    env = CitizenScienceEnv(df_files[0], out_features, N_SEQUENCES)
+    
+    
 
-    done = False
-    for _ in range(2):
-        state = env.reset()
-        while not done:
-            state, reward, done, info = env.step(env.action_space.sample())
-    
-    
-    outcomes = pd.DataFrame(env.episode_bins) 
-    
-    
-    print(outcomes.head())
-            
+
             
 
-    # model.learn(total_timesteps=10_000, log_interval=log_freq, progress_bar=True, callback=callback_list)
+    model.learn(total_timesteps=100_000, log_interval=log_freq, progress_bar=True, callback=callback_list)
 
     # model.learn(total_timesteps=n_episodes, log_interval=log_freq, progress_bar=True, callback=callback_list)
     # model.learn(total_timesteps=8_000_000, log_interval=log_freq, progress_bar=True, callback=callback_list)

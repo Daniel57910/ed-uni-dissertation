@@ -1,7 +1,9 @@
+from datetime import datetime
+
 import pandas as pd
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.logger import TensorBoardOutputFormat
-from datetime import datetime
+
 
 class DistributionCallback(BaseCallback):
     

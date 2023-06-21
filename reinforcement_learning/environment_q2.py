@@ -1,12 +1,13 @@
-# %load environment
-# %load environment
 import gym
 import numpy as np
 from scipy.stats import norm
+
 MAX_EVAL_SIZE = 75
 from rl_constant import RL_STAT_COLS
+from bisect import bisect_left
 
-class CitizenScienceEnv(gym.Env):
+
+class CitizenScienceEnvQ2(gym.Env):
     
     metadata = {'render.modes': ['human']}
     
@@ -16,7 +17,7 @@ class CitizenScienceEnv(gym.Env):
         n_sequences: number of sequences used for preprocessing.
         n_features: number of features used for preprocessing.
         """
-        super(CitizenScienceEnv, self).__init__()
+        super(CitizenScienceEnvQ2, self).__init__()
         self.dataset = dataset
         self.unique_sessions = self.dataset[['user_id', 'session_30_count_raw']].drop_duplicates()
         self.n_sequences = n_sequences
@@ -33,7 +34,7 @@ class CitizenScienceEnv(gym.Env):
         self.episode_bins = []
         self.exp_runs = 0
         self.params = params
-        self.social_components = np.array([10, 20, 30, 40, 50, 70])
+        self.social_components = [10, 20, 30, 40, 50, 70]
 
     def reset(self):
         random_session = np.random.randint(0, self.unique_sessions.shape[0])
@@ -103,23 +104,31 @@ class CitizenScienceEnv(gym.Env):
             return next_state, reward_exp, done, meta
     
     def _assign_social_components(self):
+        
         current_event = self.current_session_index
-        social_likelihood = np.searchsorted(self.social_components, current_event)
+        social_likelihood = self.social_components[bisect_left(self.social_components, current_event)]
+        if self.metadata[f'soc_{social_likelihood}'] > 0:
+            return
+        
         assign_social = norm(
             loc=social_likelihood,
-            scale=social_likelihood // 6,
-        ).cdf(current_event) + np.random.normal(0, 0.04)
+            scale=social_likelihood // 5,
+        ).cdf(current_event) 
+    
         
-        if all([assign_social >= .4, assign_social <= 7]) and self.metadata[f'soc_{social_likelihood}'] == 0:
+        if all([assign_social >= .4, assign_social <= 7]):
             self.metadata[f'soc_{social_likelihood}'] = current_event
 
  
     def _metadata(self):
         session_metadata = self.current_session.iloc[0][RL_STAT_COLS].copy()
         session_metadata['ended'] = 0
-        for meta_col in ['small', 'medium', 'large'] + [f'soc_{i}' for i in self.social_components]:
+        for meta_col in ['small', 'medium', 'large']:
             session_metadata[f'inc_{meta_col}'] = 0
             session_metadata[f'time_{meta_col}'] = 0
+        
+        for soc_col in self.social_components:
+            session_metadata[f'soc_{soc_col}'] = 0
 
         return session_metadata
     

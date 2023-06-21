@@ -1,11 +1,13 @@
 # %load environment
 # %load environment
+from collections import OrderedDict
+
 import gym
 import numpy as np
 from scipy.stats import norm
 
 from rl_constant import RL_STAT_COLS
-from collections import OrderedDict
+
 MAX_EVAL_SIZE = 75
 
 class CitizenScienceEnvReplay(gym.Env):

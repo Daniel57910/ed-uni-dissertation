@@ -13,13 +13,13 @@ import glob
 
 LOG_DIR = 'dissertation_project_code/rl_results/dqn_csv'
 
-EXPERIMENTS = {
+EXPERIMENTS_Q1 = {
     'dqn_pred_cnn': 'experiments/dqn_pred_cnn/2023-06-13_16-11-42/training_metrics',
     'dqn_label_cnn': 'experiments/dqn_label_cnn/2023-06-14_07-19-19/training_metrics',
     'dqn_none_cnn': 'experiments/dqn_None_cnn/2023-06-14_13-40-54/training_metrics',
     'dqn_pred_mlp': 'experiments/dqn_pred_mlp/2023-06-14_20-10-32/training_metrics',
     'dqn_pred_cnn_no_pen': 'experiments/dqn_pred_cnn/2023-06-20_10-38-22/training_metrics',
-    'dqn_cnn_none_no_pen': None
+    'dqn_cnn_none_no_pen': 'experiments/dqn_None_cnn/2023-06-20_15-27-49/training_metrics'
 
 }
 EXPERIMENT_PATH = 'experiments'
@@ -27,15 +27,12 @@ import argparse
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, default='dqn_label_cnn')
-    parser.add_argument('--exp_index', type=int, default=4)
     args = parser.parse_args()
     return args
 
 def tensorboard_concatenate_rl_results():
-    args = parse_args()
     
-    for exp_name, exp_path in EXPERIMENTS.items():
+    for exp_name, exp_path in EXPERIMENTS_Q1.items():
         print('exp_name: ', exp_name)
         dataset = 'train' if 'train' in exp_path else 'test'
 

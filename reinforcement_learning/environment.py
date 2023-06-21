@@ -2,8 +2,10 @@
 import gym
 import numpy as np
 from scipy.stats import norm
+
 MAX_EVAL_SIZE = 75
 from rl_constant import RL_STAT_COLS
+
 
 class CitizenScienceEnv(gym.Env):
     

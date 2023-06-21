@@ -1,27 +1,25 @@
 import argparse
 import logging
 import os
+import random
 from datetime import datetime
 from functools import reduce
 from pprint import pformat
 from typing import Callable
-from stable_baselines3.common.evaluation import evaluate_policy
-from stable_baselines3.common.vec_env import DummyVecEnv
-from stable_baselines3.common.callbacks import CallbackList
+
 import boto3
-import random
 import numpy as np
 import pandas as pd
 import torch
+from stable_baselines3 import A2C, DQN, PPO, SAC, TD3
+from stable_baselines3.common.callbacks import CallbackList
+from stable_baselines3.common.evaluation import evaluate_policy
+from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
+
 from callback import DistributionCallback
 from environment import CitizenScienceEnv
-from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 from policies.cnn_policy import CustomConv1dFeatures
-from rl_constant import (
-    FEATURE_COLUMNS
-)
-from stable_baselines3 import DQN, PPO, A2C, SAC, TD3
-
+from rl_constant import FEATURE_COLUMNS
 
 logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p', level=logging.INFO)
 np.set_printoptions(precision=4, linewidth=200, suppress=True)
@@ -30,6 +28,7 @@ pd.set_option('display.max_columns', 500)
 pd.set_option('display.width', 1000)
 pd.set_option('display.max_rows', 500)
 import zipfile
+
 import torch.nn as nn
 
 S3_BASELINE_PATH = 'dissertation-data-dmiller'
@@ -38,6 +37,7 @@ CHECKPOINT_FREQ = 100_000
 TB_LOG = 10_000
 WINDOW = 2
 import glob
+
 TB_LOG = 10_000
 WINDOW = 1
 REWARD_CLIP = 90

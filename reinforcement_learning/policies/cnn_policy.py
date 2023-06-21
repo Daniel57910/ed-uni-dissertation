@@ -1,13 +1,14 @@
+import logging
 from typing import Dict, List, Type, Union
 
 import gym
 import torch
+import torch.nn.functional as F
 from gym import spaces
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from stable_baselines3.dqn.policies import DQNPolicy
-import torch.nn.functional as F
 from torch import nn
-import logging
+
 global logger
 logger = logging.getLogger(__name__)
 

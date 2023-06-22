@@ -55,6 +55,14 @@ Reward clip based on achieving maximum reward for 90 minute session at
 (s / 45) * (s - 45)
 """
 
+MODEL_PROTOS = {
+    'dqn': DQN,
+    'ppo': PPO,
+    'a2c': A2C
+}
+
+
+
 def linear_schedule(initial_value: float) -> Callable[[float], float]:
     """
     Linear learning rate schedule.
@@ -83,6 +91,7 @@ def parse_args():
     parse.add_argument('--part', type=str, default='train')
     parse.add_argument('--feature_extractor', type=str, default='cnn') 
     parse.add_argument('--q2', type=bool, default=True)
+    parse.add_argument('--model', type=str, default='dqn')
     args = parse.parse_args()
     return args
 
@@ -91,10 +100,15 @@ def simplify_experiment(vectorized_df):
     vectorized_df = [
         df[(df['session_size'] >= MIN_MAX_RANGE[0]) & (df['session_size'] <= MIN_MAX_RANGE[1])] for df in vectorized_df
     ]
-
+    
     return vectorized_df
 
-
+def rebatch_data(vectorized_df):
+    df_sublist = []
+    for i in range(0, len(vectorized_df), 5):
+        df_sublist.append(pd.concat(vectorized_df[i:i+5], ignore_index=True))
+    return df_sublist
+        
 def main(args):
    
     
@@ -102,14 +116,15 @@ def main(args):
     logger.info(pformat(args.__dict__))
     exec_time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
     
-    read_path, n_files, n_episodes, lstm, part, feature_ext, q2 = (
+    read_path, n_files, n_episodes, lstm, part, feature_ext, q2, model = (
         args.read_path, 
         args.n_files, 
         args.n_episodes, 
         args.lstm,
         args.part,
         args.feature_extractor,
-        args.q2
+        args.q2,
+        args.model
     )
 
     base_read_path = os.path.join(read_path, f'files_used_{n_files}', f'window_{WINDOW}', f'batched_{part}')
@@ -125,6 +140,12 @@ def main(args):
     ]
    
     df_files = simplify_experiment(df_files)
+    
+    if args.q2:
+        logger.info(f'Using Q2 environment: rebatching data')
+        df_files = rebatch_data(df_files)
+        logger.info(f'Rebatched to n envs: {len(df_files)}')
+    
 
     n_envs = len(df_files)
     
@@ -143,7 +164,7 @@ def main(args):
     
     logger.info(f'Vectorized environments created')
 
-    base_exp_path = os.path.join('experiments', f'dqn_{lstm}_{feature_ext}/{exec_time}')
+    base_exp_path = os.path.join('experiments', "q2" if q2 else "q1", f'{model}_{lstm}_{feature_ext}/{exec_time}')
 
 
     tensorboard_dir, checkpoint_dir = (
@@ -173,38 +194,29 @@ def main(args):
     callback_list = CallbackList([checkpoint_callback, logger_callback])
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    logger.info(f'Setting up model: {model}, device: {device}')
     
-    if feature_ext == 'cnn':
-        CustomConv1dFeatures.setup_sequences_features(N_SEQUENCES + 1, len(out_features) + 3)
-        logger.info('Using custom 1 dimensional CNN feature extractor')
-        policy_kwargs = dict(
-            features_extractor_class=CustomConv1dFeatures,
-            net_arch=[12],
-            normalize_images=False,
-            activation_fn=nn.ELU,
-            
-        )
-        model = DQN(
-            policy='MultiInputPolicy', 
-            env=monitor_train, 
-            verbose=1, 
-            tensorboard_log=tensorboard_dir, 
-            policy_kwargs=policy_kwargs, 
-            device=device, 
-            stats_window_size=1000)
-    else:
-        model = DQN(
-            policy='MlpPolicy', 
-            env=monitor_train, 
-            verbose=1, 
-            tensorboard_log=tensorboard_dir, 
-            policy_kwargs=dict(
-                activation_fn=nn.ELU,
-                normalize_images=False,
-            ),
-            device=device, 
-            stats_window_size=1000
-        )
+
+    CustomConv1dFeatures.setup_sequences_features(N_SEQUENCES + 1, len(out_features) + 3)
+    logger.info('Using custom 1 dimensional CNN feature extractor')
+    policy_kwargs = dict(
+    features_extractor_class=CustomConv1dFeatures,
+        net_arch=[12],
+        normalize_images=False,
+        activation_fn=nn.ELU,
+    )
+        
+    model_proto = MODEL_PROTOS[model]
+        
+    model = model_proto(
+        policy='CnnPolicy', 
+        env=monitor_train, 
+        verbose=1, 
+        tensorboard_log=tensorboard_dir, 
+        policy_kwargs=policy_kwargs, 
+        device=device, 
+        stats_window_size=1000)
+
         
     logger.info(f'Model created: policy')
    
@@ -230,16 +242,11 @@ def main(args):
         'running q2: {}'.format(q2),
     ]))
     
-    
+
+    model.learn(total_timesteps=10_000, log_interval=log_freq, progress_bar=True, callback=callback_list)
 
 
-            
-
-    model.learn(total_timesteps=100_000, log_interval=log_freq, progress_bar=True, callback=callback_list)
-
-    # model.learn(total_timesteps=n_episodes, log_interval=log_freq, progress_bar=True, callback=callback_list)
-    # model.learn(total_timesteps=8_000_000, log_interval=log_freq, progress_bar=True, callback=callback_list)
-    
 if __name__ == '__main__':
     args = parse_args()
     main(args)
+    

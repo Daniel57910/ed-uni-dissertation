@@ -6,7 +6,6 @@ MAX_EVAL_SIZE = 75
 from rl_constant import RL_STAT_COLS
 from bisect import bisect_left
 
-
 class CitizenScienceEnvQ2(gym.Env):
     
     metadata = {'render.modes': ['human']}
@@ -34,7 +33,10 @@ class CitizenScienceEnvQ2(gym.Env):
         self.episode_bins = []
         self.exp_runs = 0
         self.params = params
-        self.social_components = [10, 20, 30, 40, 50, 70]
+        self.social_components = {
+            soc: norm(soc, scale=soc//5)
+            for soc in [10, 20, 30, 40, 50, 70]
+        }
 
     def reset(self):
         random_session = np.random.randint(0, self.unique_sessions.shape[0])
@@ -106,18 +108,17 @@ class CitizenScienceEnvQ2(gym.Env):
     def _assign_social_components(self):
         
         current_event = self.current_session_index
-        social_likelihood = self.social_components[bisect_left(self.social_components, current_event)]
-        if self.metadata[f'soc_{social_likelihood}'] > 0:
+        social_components_keys = list(self.social_components.keys())
+        social_likelihood_index = social_components_keys[bisect_left(social_components_keys, current_event)]
+        
+        if self.metadata[f'soc_{social_likelihood_index}'] > 0:
             return
         
-        assign_social = norm(
-            loc=social_likelihood,
-            scale=social_likelihood // 5,
-        ).cdf(current_event) 
-    
-        
+        social_asssignmnet_fn = self.social_components[social_likelihood_index]
+        assign_social = social_asssignmnet_fn.cdf(current_event)
+         
         if all([assign_social >= .4, assign_social <= 7]):
-            self.metadata[f'soc_{social_likelihood}'] = current_event
+            self.metadata[f'soc_{social_likelihood_index}'] = current_event
 
  
     def _metadata(self):

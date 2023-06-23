@@ -51,5 +51,17 @@ def tensorboard_concatenate_rl_results():
         print(f'write_path: {write_path}')
         df.to_csv(write_path, index=False)
 
+
+def concatenate_sensitivity_analysis_stats():
+    files = glob.glob('rl_evaluation/sensitivity_analysis/*.parquet')
+    
+    print(f'Files concaentated: no of sessoins: {len(files)}')
+    df = pd.concat([pd.read_parquet(f) for f in files])
+    print(f'Df concatenated: {df.shape}')
+    
+    print(f'Writing to parquet ')
+    df.to_parquet('dissertation_project_code/rl_results/dqn_parquet/sensitivity_analysis/dqn_pred_cnn.parquet', index=False)
+
 if __name__ == "__main__":
-    tensorboard_concatenate_rl_results()
+    # tensorboard_concatenate_rl_results()
+    concatenate_sensitivity_analysis_stats()

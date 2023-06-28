@@ -16,9 +16,7 @@ class ModelBase(LightningModule):
         super().__init__()
 
         self.loss = nn.BCEWithLogitsLoss()
-
-        self.runtime_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
+        
         self.train_accuracy = Accuracy(task='binary', threshold=0.5)
         self.valid_accuracy = Accuracy(task='binary', threshold=0.5)
 
@@ -27,8 +25,10 @@ class ModelBase(LightningModule):
 
         self.train_recall = Recall(task='binary', threshold=0.5)
         self.valid_recall = Recall(task='binary', threshold=0.5)
+        
+        self.training_step_outputs = []
+        self.validation_step_outputs = [] 
 
-        self = self.to(self.runtime_device)
 
     def training_step(self, batch, batch_idx):
         loss, acc, prec, rec = self._run_step(batch, 'train')
@@ -52,13 +52,14 @@ class ModelBase(LightningModule):
             sync_dist=True
         )
 
-        return {
+        self.training_step_outputs.append({
             "loss": loss,
             "acc": acc,
             "prec": prec,
             "rec": rec
-        }
-
+        })
+        return loss
+                                
 
     def validation_step(self, batch, batch_idx):
         loss, acc, prec, rec = self._run_step(batch, 'valid')
@@ -81,13 +82,16 @@ class ModelBase(LightningModule):
             on_epoch=True,
             sync_dist=True
         )
-
-        return {
+        
+        self.validation_step_outputs.append({
             "loss": loss,
             "acc": acc,
             "prec": prec,
             "rec": rec
-        }
+        })
+        
+        return loss
+
 
 
     def _run_step(self, batch, type):
@@ -109,14 +113,6 @@ class ModelBase(LightningModule):
             concatenated = torch.cat((user_id.unsqueeze(1), features), dim=2)
             y_hat = self(concatenated)
             
-            
-        
-        # if 'embedded' in self.model_name:
-        #     concatenated = torch.cat((ordinal_features, categorical_features), dim=2)
-        #     assert concatenated.shape == (batch.shape[0], self.n_sequences, 19), 'concatenated shape is wrong'
-        #     y_hat = self(torch.cat((ordinal_features, categorical_features), dim=2))
-
-
         loss = self.loss(y_hat, y)
 
         if 'train' in type:
@@ -144,13 +140,13 @@ class ModelBase(LightningModule):
 
 
 
-    def training_epoch_end(self, outputs):
+    def on_train_epoch_end(self):
 
         acc, prec, rec, loss = (
-            torch.stack([out['acc'] for out in outputs]),
-            torch.stack([out['prec'] for out in outputs]),
-            torch.stack([out['rec'] for out in outputs]),
-            torch.stack([out['loss'] for out in outputs])
+            torch.stack([out['acc'] for out in self.training_step_outputs]),
+            torch.stack([out['prec'] for out in self.training_step_outputs]),
+            torch.stack([out['rec'] for out in self.training_step_outputs]),
+            torch.stack([out['loss'] for out in self.training_step_outputs])
         )
 
         acc, prec, rec, loss = (
@@ -164,15 +160,18 @@ class ModelBase(LightningModule):
         self.logger.experiment.add_scalar('prec/train', prec, self.current_epoch)
         self.logger.experiment.add_scalar('rec/train', rec, self.current_epoch)
         self.logger.experiment.add_scalar('loss_e/train', loss, self.current_epoch)
+        
+        self.training_step_outputs.clear()
 
 
-    def validation_epoch_end(self, outputs):
+    def on_validation_epoch_end(self) -> None:
+    
 
         acc, prec, rec, loss = (
-            torch.stack([out['acc'] for out in outputs]),
-            torch.stack([out['prec'] for out in outputs]),
-            torch.stack([out['rec'] for out in outputs]),
-            torch.stack([out['loss'] for out in outputs])
+            torch.stack([out['acc'] for out in self.validation_step_outputs]),
+            torch.stack([out['prec'] for out in self.validation_step_outputs]),
+            torch.stack([out['rec'] for out in self.validation_step_outputs]),
+            torch.stack([out['loss'] for out in self.validation_step_outputs])
         )
 
         acc, prec, rec, loss = (
@@ -182,11 +181,15 @@ class ModelBase(LightningModule):
             torch.mean(loss)
         )
 
+
         self.logger.experiment.add_scalar('acc/valid', acc, self.current_epoch)
         self.logger.experiment.add_scalar('prec/valid', prec, self.current_epoch)
         self.logger.experiment.add_scalar('rec/valid', rec, self.current_epoch)
         self.logger.experiment.add_scalar('loss_e/valid', loss, self.current_epoch)
 
+
+        self.validation_step_outputs.clear()
+        
     def configure_optimizers(self):
         # equation for adam optimizer
         """

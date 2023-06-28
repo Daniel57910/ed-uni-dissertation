@@ -153,9 +153,7 @@ def main(args):
     logger.info(f'Running experiment at {date_time}')
 
     s3_client = boto3.client(
-        's3',
-        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
-        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
+        's3'
     )
     
     npz_extractor = NPZExtractor(
@@ -230,7 +228,7 @@ def main(args):
         f'batch_size: {args.batch_size}',
         f'n_epoch: {args.n_epochs}',
         f'n_workers: 8',
-        f'device: {model.runtime_device}',
+        f'device: {accelerator}',
         f'train_samples: {clickstream_data_loader.training_data[0].shape[0]}',
         f'val_samples: {clickstream_data_loader.validation_data[0].shape[0]}',
         f'hidden size: {args.hidden_size}',

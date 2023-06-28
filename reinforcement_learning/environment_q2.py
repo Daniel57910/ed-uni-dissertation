@@ -13,7 +13,7 @@ class CitizenScienceEnvQ2(gym.Env):
     def __init__(self, dataset, out_features, n_sequences, params=None):
         """
         trajectories: dictionary of user_id to their respective trajectories.
-        n_sequences: number of sequences used for preprocessing.
+        n_sequences: 
         n_features: number of features used for preprocessing.
         """
         super(CitizenScienceEnvQ2, self).__init__()
@@ -29,15 +29,24 @@ class CitizenScienceEnvQ2(gym.Env):
         max_session_size = self.dataset['session_size'].max()
         
         self.action_space = gym.spaces.Discrete(4)
-        self.observation_space = gym.spaces.Box(low=-1, high=max_session_size + 1, shape=(len(out_features) + 3, n_sequences + 1), dtype=np.float32)
+        self.observation_space = gym.spaces.Box(low=-1, high=91, shape=(len(out_features) + 3, n_sequences + 1), dtype=np.float32)
         self.episode_bins = []
         self.exp_runs = 0
         self.params = params
         self.social_components = {
             soc: norm(soc, scale=soc//5)
-            for soc in [10, 20, 30, 40, 50, 70]
+            for soc in self._setup_social_components(params)
         }
 
+    def _setup_social_components(self, params):
+        if not params['soc_freq'] or params['soc_freq'] == 7:
+            return [10, 20, 30, 45, 60, 75, 92]
+        
+        if params['soc_freq'] == 3:
+            return [10, 30, 60, 92]
+        
+        return [10, 30, 45, 60, 75, 92]
+        
     def reset(self):
         random_session = np.random.randint(0, self.unique_sessions.shape[0])
         

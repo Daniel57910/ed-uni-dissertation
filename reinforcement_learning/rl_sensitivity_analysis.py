@@ -10,16 +10,18 @@ logger = logging.getLogger(__name__)
 client = boto3.client('s3')
 import argparse
 import glob
-from itertools import combinations, product
 
 import numpy as np
 import pandas as pd
-from stable_baselines3 import DQN
+from stable_baselines3 import DQN, A2C
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 
 from environment import CitizenScienceEnv
+from environment_q2 import CitizenScienceEnvQ2
+from itertools import product
 from rl_constant import FEATURE_COLUMNS, LOAD_COLS, METADATA, RL_STAT_COLS
+from pprint import pprint, pformat
 
 MIN_MAX_RANGE = (10, 90)
 from tqdm import tqdm
@@ -32,15 +34,20 @@ SENSITIVITY_PARAMS = {
     "window": (.8,  .6),
     "mid": {.15, .04},
     "large": {.3, .09},
-    
+}
+
+MODEL_PARAMS = {
+    'dqn_pred_cnn': DQN,
+    'a2c_pred_cnn': A2C,
 }
 
 def parse_args():
     parse = argparse.ArgumentParser()
-    parse.add_argument('--algo', type=str, default='dqn_pred_cnn'),
-    parse.add_argument('--run_date', type=str, default='2023-06-13_16-11-42'),
-    parse.add_argument('--write_path', type=str, default='rl_evaluation'),
-    parse.add_argument('--n_files', type=int, default=2),
+    parse.add_argument('--algo', type=str, default='dqn_pred_cnn')
+    parse.add_argument('--run_date', type=str, default='2023-06-22_14-22-36')
+    parse.add_argument('--write_path', type=str, default='rl_evaluation')
+    parse.add_argument('--n_files', type=int, default=2)
+    parse.add_argument('--q2', default=1, type=int)
     args = parse.parse_args()
     return args
 
@@ -49,6 +56,7 @@ def find_s3_candidate(algo, run_date):
     
     folder_prefix = os.path.join(
         'experiments',
+        "q2",
         algo,
         run_date,
         'checkpoints'
@@ -87,13 +95,17 @@ def get_policy(algo, run_date):
     client.download_file(S3_BASELINE_PATH, s3_candidate, s3_candidate)
     return s3_candidate
         
-
 def simplify_experiment(vectorized_df):
+    df_container = []
     vectorized_df = [
         df[(df['session_size'] >= MIN_MAX_RANGE[0]) & (df['session_size'] <= MIN_MAX_RANGE[1])] for df in vectorized_df
     ]
-
-    return vectorized_df
+     
+    for df in vectorized_df:
+        df['project_count'] = 0
+        df_container.append(df)
+    
+    return df_container
 
 
 def _label_or_pred(algo):
@@ -105,7 +117,7 @@ def _label_or_pred(algo):
         return None
    
 
-def run_sensitivity_analysis(env_datasets, policy_path, feature_cols, param_combos): 
+def run_sensitivity_analysis(env_datasets, policy_path, feature_cols, param_combos, q2, algo): 
     
     p_bar = tqdm(param_combos, unit='item')
     out_df_container = []
@@ -113,15 +125,15 @@ def run_sensitivity_analysis(env_datasets, policy_path, feature_cols, param_comb
         params = {
             "window": combo[0].round(2),
             "mid": combo[1].round(2),
-            "large": combo[2].round(2)
+            "large": combo[2].round(2),
+            "soc_freq": int(combo[3])
         }
         p_bar.set_description(f'Running combo {params}')
         
-        vev_envs = DummyVecEnv([lambda: CitizenScienceEnv(dataset, feature_cols, N_SEQUENCES, params) for dataset in env_datasets])
+        print(f'running q2: {q2}')
+        vec_monitor = VecMonitor(DummyVecEnv([lambda: CitizenScienceEnvQ2(dataset, feature_cols, N_SEQUENCES, params) for dataset in env_datasets]))
         
-        vec_monitor = VecMonitor(vev_envs)
-        
-        model = DQN.load(
+        model = MODEL_PARAMS[algo].load(
             policy_path,
             env=vec_monitor,
             verbose=0,
@@ -131,7 +143,7 @@ def run_sensitivity_analysis(env_datasets, policy_path, feature_cols, param_comb
             model,
             model.get_env(),
             deterministic=False,
-            n_eval_episodes=1_000
+            n_eval_episodes=10
         )
         
         dists = model.get_env().get_attr('episode_bins')
@@ -147,26 +159,30 @@ def run_sensitivity_analysis(env_datasets, policy_path, feature_cols, param_comb
     return pd.concat(out_df_container)
         
 
-   
+def rebatch_data(vectorized_df):
+    df_sublist = []
+    for i in range(0, len(vectorized_df), 10):
+        df_sublist.append(pd.concat(vectorized_df[i:i+10], ignore_index=True))
+    return df_sublist  
 
-
-        
 
 def main(args):
-    algo, run_date, write_path, n_files = args.algo, args.run_date, args.write_path, args.n_files
+    algo, run_date, write_path, n_files, q2 = args.algo, args.run_date, args.write_path, args.n_files, args.q2
 
     params_window = np.arange(*SENSITIVITY_PARAMS['window'], -.02).tolist()
     params_mid = np.arange(*SENSITIVITY_PARAMS['mid'], -.01).tolist()
     params_large = np.arange(*SENSITIVITY_PARAMS['large'], -.02).tolist()
+    social_params = [3, 5, 7]
     
     logger.info(f'Window params: {params_window}')
     logger.info(f'Mid params: {params_mid}')
     logger.info(f'Large params: {params_large}')
+    logger.info(f'Social params: {social_params}')
     
-    param_combos = np.array(list(product(params_window, params_mid, params_large)))
+    param_combos = np.array(list(product(params_window, params_mid, params_large, social_params)))
     logger.info(f'Combination parameters obtained: {param_combos.shape}, running monte carlo simulation on 200 random samples')
     param_combos = param_combos[np.random.choice(param_combos.shape[0], 200, replace=False), :]
-    
+   
     policy_path = get_policy(algo, run_date)
     logger.info(f'Policy path downloaded, evaluating experiment: {policy_path}')
     
@@ -178,10 +194,24 @@ def main(args):
     ]
 
     env_datasets = simplify_experiment(env_datasets)
+    
+    if 'a2c' in algo:
+        logger.info(f'Rebatching data for A2C')
+        env_datasets = rebatch_data(env_datasets)
+        
     feature_cols = FEATURE_COLUMNS + [_label_or_pred(algo)] if _label_or_pred(algo) else FEATURE_COLUMNS
     logger.info(f'Length of features: {len(feature_cols)}')
     logger.info(f'Running sensitivity analysis per monte carlo simulation')
-    sensitivity_df = run_sensitivity_analysis(env_datasets, policy_path, feature_cols, param_combos)
+    logger.info(pformat(
+        {
+            'algo': algo,
+            'q2': q2==1,
+            'n_envs': len(env_datasets),
+            'n_features': len(feature_cols),
+            
+        }
+    ))
+    sensitivity_df = run_sensitivity_analysis(env_datasets, policy_path, feature_cols, param_combos, q2==1, algo)
 
     
     write_path = os.path.join(write_path, f'sensitivity_analysis', f'{algo}.parquet')

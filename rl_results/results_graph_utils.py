@@ -22,17 +22,25 @@ EXPERIMENTS_Q1 = {
     'dqn_cnn_none_no_pen': 'experiments/dqn_None_cnn/2023-06-20_15-27-49/training_metrics'
 
 }
+
+EXPERIMENTS_Q2 = {
+    'dqn_pred_cnn': 'experiments/q2/dqn_pred_cnn/2023-06-22_14-22-36/training_metrics',
+    'qrdqn_pred_cnn': 'experiments/q2/qrdqn_pred_cnn/2023-06-22_19-51-03/training_metrics',
+    'a2c_pred_cnn': 'experiments/q2/a2c_pred_cnn/2023-06-23_09-15-50/training_metrics'
+}
+
 EXPERIMENT_PATH = 'experiments'
 import argparse
 
 def parse_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--q2', type=int, default=1)
     args = parser.parse_args()
     return args
 
-def tensorboard_concatenate_rl_results():
+def tensorboard_concatenate_rl_results(run_q2: bool):
     
-    for exp_name, exp_path in EXPERIMENTS_Q1.items():
+    for exp_name, exp_path in EXPERIMENTS_Q2.items() if run_q2 else EXPERIMENTS_Q1.items():
         print('exp_name: ', exp_name)
         dataset = 'train' if 'train' in exp_path else 'test'
 
@@ -44,7 +52,7 @@ def tensorboard_concatenate_rl_results():
     
         print(f'Files concaentated: no of sessoins: {len(df)}')
         df = df.drop(columns=['Unnamed: 0'])
-        write_path = os.path.join(LOG_DIR, dataset)
+        write_path = os.path.join(LOG_DIR, dataset, "q2" if run_q2 else "")
         if not os.path.exists(write_path):
             os.makedirs(write_path)
         write_path = os.path.join(write_path, f'{exp_name}.csv')
@@ -63,5 +71,6 @@ def concatenate_sensitivity_analysis_stats():
     df.to_parquet('dissertation_project_code/rl_results/dqn_parquet/sensitivity_analysis/dqn_pred_cnn.parquet', index=False)
 
 if __name__ == "__main__":
-    # tensorboard_concatenate_rl_results()
-    concatenate_sensitivity_analysis_stats()
+    args = parse_args()
+    tensorboard_concatenate_rl_results(args.q2 == 1)
+    # concatenate_sensitivity_analysis_stats()

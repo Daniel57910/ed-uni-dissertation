@@ -86,7 +86,6 @@ def parse_args():
     parse = argparse.ArgumentParser()
     parse.add_argument('--read_path', type=str, default='rl_ready_data_conv')
     parse.add_argument('--n_files', type=int, default=2)
-    parse.add_argument('--n_episodes', type=int, default=10_000)
     parse.add_argument('--lstm', type=str, default='label')
     parse.add_argument('--part', type=str, default='train')
     parse.add_argument('--feature_extractor', type=str, default='cnn') 
@@ -116,10 +115,9 @@ def main(args):
     logger.info(pformat(args.__dict__))
     exec_time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
     
-    read_path, n_files, n_episodes, lstm, part, feature_ext, q2, model = (
+    read_path, n_files, lstm, part, feature_ext, q2, model = (
         args.read_path, 
         args.n_files, 
-        args.n_episodes, 
         args.lstm,
         args.part,
         args.feature_extractor,
@@ -226,7 +224,6 @@ def main(args):
     
             
     logger.info(pformat([
-        'n_episodes: {}'.format(n_episodes),
         'read_path: {}'.format(read_path),
         'n_files: {}'.format(n_files),
         'n_sequences: {}'.format(N_SEQUENCES),

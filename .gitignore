@@ -191,3 +191,4 @@ cython_debug/
 **tfevents**
 rl_results/dqn_tb/**
 **/*.DS_Store
+**/*.png

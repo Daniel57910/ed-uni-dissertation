@@ -1,0 +1,11 @@
+gymnasium
+torch
+numpy
+pandas
+seaborn
+notebook
+stable-baselines3[extra] 
+python-dotenv 
+fsspec[s3] 
+boto3 
+s3fs==2022.11.0 

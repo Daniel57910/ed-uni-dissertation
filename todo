@@ -1,0 +1,23 @@
+CNN Pred
+Exp Replay
+PPO
+A2C
+ 
+Compare results 
+
+
+changing environments
+https://arxiv.org/pdf/2005.10619.pdf
+https://www.jmlr.org/papers/volume9/csaji08a/csaji08a.pdf
+
+experiment 2:
+- top DQN
+- top PPO
+- top A2C
+each incentive can be placed in any order
+
+options:
+repeat of experiment 1 with time window
+repeat of experiment 2 with time window
+
+

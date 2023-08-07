@@ -1,0 +1,25 @@
+Hi Kobi
+
+Hope you're good.
+
+I've updated the LSTM experiments to include the following:
+- whether a person will continue in their work session for an additional 10, 20 or 30 minutes.
+
+I also know I was not that clear over the phone (often I'm not especially when in the middle of details). Here is the definition of a work session.
+
+Series of user clicks where no gap between clicks exceeds the specified time threshold. 
+
+In measuring whether a user will drop off within 10 minutes for example a session could be both 12 minutes or 1 hour. The identifier is that within this session no contiguous clicks have a time delta greater than 10 minutes. 
+
+I've written up the results and have included them in this PDF. Key findings are:
+- including the previous users 20 to 30 events in each observation strikes the greatest balance between being able to correctly identify engaged users and not missing disengaged users.
+- until a user has spent over 90 minutes on the platform in aggregate it is difficult to predict their behaviour.
+- predicting user behaviour based on their aggregate time on the platform is more reliable than their aggregate time in a session
+- when looking to predict longer term behaviour (continuing for 30 minutes) the choice of model architecture has much less of an effect on the behaviour of the model than short and mid term behaviour.
+
+I've attached a PDF of the results (over the weekend my intention is to write up the data classification algorithm, preprocessing and some analysis following preprocessing (standard statistical stuff such as av time in session, events per session, time between sessions) and probability of session length given previous session behaviour for longer history users.
+
+Once that's done just got to lit review, conclusion & introduction so feel very much on the home straight.
+
+Thanks again for all your help and support with this project and ensuring it stays on the correct direction.
+
